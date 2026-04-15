@@ -51,9 +51,14 @@ def test_battwatt_e2e_simulation():
         to_bat, from_bat = controller.step(prod, cons, datetime_index=index, duration_hours=0.25)
         to_grid_bat, from_grid_bat = bat.step(to_bat, from_bat, duration_hours=0.25)
         
-        # Grid interaction
-        prod2 = prod - to_bat + to_grid_bat
-        cons2 = cons - from_bat + from_grid_bat
+        # Grid interaction (Fix: ensure non-negative grid flow)
+        net_grid_energy = (prod - cons) - (to_bat - from_bat) + (to_grid_bat - from_grid_bat)
+        if net_grid_energy >= 0:
+            prod2 = net_grid_energy
+            cons2 = 0
+        else:
+            prod2 = 0
+            cons2 = -net_grid_energy
 
         merged_df.at[index, 'adj_prod'] = prod2
         merged_df.at[index, 'adj_cons'] = cons2

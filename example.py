@@ -118,14 +118,14 @@ def main() -> None:
         to_grid, from_grid = Battery.step(to_battery, from_battery, duration_hours=0.25)
         
 
-        # # check if the controller works well, to_grid and from_grid should be 0, otherwise raise an error
-        # if abs(to_grid) > 1e-6 or abs(from_grid) > 1e-6:
-        #     print(f'to_grid: {to_grid}, from_grid: {from_grid}')
-        #     raise ValueError("Controller error: controller wanted to violate battery specs.")
-
         # calculate production and consumption after battery adjustment
-        production2 = production - to_battery + to_grid
-        consumption2 = consumption - from_battery + from_grid
+        net_grid_energy = (production - consumption) - (to_battery - from_battery) + (to_grid - from_grid)
+        if net_grid_energy >= 0:
+            production2 = net_grid_energy
+            consumption2 = 0
+        else:
+            production2 = 0
+            consumption2 = -net_grid_energy
 
         soc = Battery.get_soc()
         merged_df.at[index, 'battery_soc'] = soc

@@ -1,7 +1,7 @@
 # Project TODOs
 
 ## Bugs & Fixes
-- [ ] **Fix energy flow calculation in `example.py`**: 
+- [x] **Fix energy flow calculation in `example.py`**: 
   The current calculation for `production2` and `consumption2` can result in negative values when the battery charges from or discharges to the grid. 
   ```python
   # Current problematic logic:
