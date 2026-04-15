@@ -3,3 +3,4 @@ __pycache__/
 *.csv
 *.xlsx
 .DS_Store
+tests/simulation_baseline.csv
