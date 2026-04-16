@@ -105,8 +105,8 @@ def main() -> None:
     ### batterij simulatie ###
     Battery = get_battery("Bliq_5kwh")
 
-    # controller = Controller_PV(Battery)
-    controller = Controller_price(Battery, merged_df)
+    controller = Controller_PV(Battery)
+    # controller = Controller_price(Battery, merged_df)
 
     for index, row in merged_df.iterrows():
         production = row['teruglevering']
