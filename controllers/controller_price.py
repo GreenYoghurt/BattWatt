@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from controller_PV import BaseController
+from .controller_PV import BaseController
 
 class Controller_price(BaseController):
     def __init__(self, Battery, prices_df: pd.DataFrame):

@@ -5,10 +5,10 @@ from data_loader import load_meter_data_HomeWizzard, load_price_data, merge_data
 from plotter import plot_usage_and_price, plot_battery_effect, show
 from energy_providers import get_providers
 from battery import get_battery
-from controllers.controller_PV import Controller_PV
-from controllers.controller_price import Controller_price
+from controllers.controller_MPC import Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
+from models import SimulationResult
 
 # Set CWD to the directory containing the script
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -22,23 +22,18 @@ PATH_DATA = Path("../example/P1e-2025-1-01-2026-1-01.csv")
 
 def check_energy_conservation(result):
     print(f"Energy Balance Check:")
-    print(f"  Initial Net: {result.total_production_kwh - result.total_consumption_kwh:.3f} kWh")
-    print(f"  Final Net:   {result.total_adjusted_production_kwh - result.total_adjusted_consumption_kwh:.3f} kWh")
-    print(f"  Delta SoC:   {result.delta_soc_kwh:.3f} kWh")
-    
     losses = (result.total_production_kwh - result.total_consumption_kwh) - \
              (result.total_adjusted_production_kwh - result.total_adjusted_consumption_kwh) - \
              result.delta_soc_kwh
-    
-    print(f"  Losses:      {losses:.3f} kWh")
-    
+    print(f"  Losses: {losses:.3f} kWh")
     if losses < -1e-6:
-        print(f"  WARNING: Energy conservation violated! Negative losses: {losses:.6f}")
+        print(f"  WARNING: Energy conservation violated! {losses:.6f}")
     else:
-        print(f"  Energy conservation passed (Losses >= 0).")
+        print(f"  Energy conservation passed.")
 
 def main() -> None:
     # 1. Data inlezen
+    print("Loading data...")
     price_df = load_price_data(PATH_PRICE)
     meter_df = load_meter_data_HomeWizzard(PATH_DATA)
 
@@ -55,17 +50,17 @@ def main() -> None:
 
     # 3. Setup Battery & Controller
     battery = get_battery("Bliq_5kwh")
-    # controller = Controller_PV(battery)
-    controller = Controller_price(battery, merged_df)
+    
+    print(f"Starting MPC Simulation for the full duration...")
+    # horizon_hours=24 means it looks ahead 24 hours at every 15-min step
+    # reoptimize_every_hours=12.0 means we only solve a new optimization once every 12 hours
+    controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
 
     # 4. Run Simulation
     simulator = Simulator(battery, controller)
     result = simulator.run(merged_df)
 
     # 5. Calculate Financials
-    # Baseline simulation (no battery) is just the input data
-    # We create a dummy result for the baseline to use the billing engine
-    from models import SimulationResult
     baseline_result = SimulationResult(
         df=merged_df,
         total_production_kwh=merged_df['teruglevering'].sum(),
@@ -84,8 +79,7 @@ def main() -> None:
     plot_battery_effect(result.df)
     
     check_energy_conservation(result)
-    
-    print(f"\nTotal Savings: €{savings:.2f}")
+    print(f"\nTotal Savings (MPC - Full Run): €{savings:.2f}")
     
     show()
 

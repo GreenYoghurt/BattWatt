@@ -74,18 +74,37 @@ class Provider:
         total_consumption = float(sum(consumption_kwh))
         total_feed_in = float(sum(feed_in_kwh))
 
-        # VARIABELE KOSTEN
-        stroom_inkoop = (1+VAT_RATE) * sum(
-            c * (p+get_energy_tax_excl_vat()) for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
-        )
+        # VARIABELE KOSTEN (STROOM ENERGIEREEKS)
+        # We splitsen inkoop-energie en inkoop-belasting als net_metering aan staat.
+        if self.net_metering:
+            # Energieprijs per interval (Marktwaarde)
+            stroom_inkoop_energie = (1+VAT_RATE) * sum(
+                c * p for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
+            )
+            
+            # Belasting over het NETTO verbruik (Saldering)
+            net_consumption = max(0.0, total_consumption - total_feed_in)
+            stroom_inkoop_belasting = (1+VAT_RATE) * net_consumption * get_energy_tax_excl_vat()
+            
+            stroom_inkoop = stroom_inkoop_energie + stroom_inkoop_belasting
+        else:
+            # Alles per interval (geen saldering)
+            stroom_inkoop = (1+VAT_RATE) * sum(
+                c * (p+get_energy_tax_excl_vat()) for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
+            )
+
         kosten_stroom_inkoop = total_consumption * self.buying_fee
         kosten_stroom_verkoop = total_feed_in * self.selling_fee
 
 
-        # INKOMSTEN
+        # INKOMSTEN (TERUGLEVERING)
+        # Terugleververgoeding (Marktwaarde)
         feed_in_revenue_incl = (1+VAT_RATE) * sum(
             f * p for f, p in zip(feed_in_kwh, prices_eur_per_kwh_excl_vat)
         )
+        
+        # Als we salderen, is de belasting-besparing al verwerkt in stroom_inkoop_belasting.
+        # Wat overblijft is de kale marktwaarde van de teruglevering.
         stroom_terugleveren_niet_te_salderen = feed_in_revenue_incl
 
 
@@ -135,7 +154,7 @@ def get_providers():
         subscription_cost=75,  # yearly fixed cost in euros
         buying_fee=0.0199892,  # cost per kWh bought for the client in euros
         selling_fee=0.02,      # cost per kWh sold for the client in euros
-        net_metering=True,     # whether net metering applies
+        net_metering=False,     # whether net metering applies
         selling_fee_net_metering=True  # whether the provider allows to net meter the selling fee
     )
     providers["Zonneplan"] = Zonneplan

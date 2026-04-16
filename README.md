@@ -44,7 +44,7 @@ BattWatt is a Python-based tool designed to evaluate and simulate household ener
 
 1. **Prepare your data**:
    - Get your P1 meter data (CSV).
-   - Get your day-ahead price data (Excel).
+   - Get your day-ahead price data (Excel)1.
 2. **Configure the script**:
    - Open `example.py` and update `PATH_PRICE` and `PATH_DATA` to point to your files.
 3. **Run the simulation**:
