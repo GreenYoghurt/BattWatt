@@ -1,12 +1,26 @@
-class Controller_empty():
-    def __init__(self):
+from abc import ABC, abstractmethod
+
+class BaseController(ABC):
+    """
+    Abstract base class for all battery controllers.
+    """
+    @abstractmethod
+    def step(self, production, consumption, datetime_index, duration_hours=0.25):
+        """
+        Calculates energy flows to and from the battery.
+        
+        Returns:
+            to_battery (float): Energy to send to the battery system (kWh).
+            from_battery (float): Energy to request from the battery system (kWh).
+        """
         pass
 
-    def step(self, production, consumption, duration_hours=0.25):
-        return production, consumption # to_battery, from_battery
+class Controller_empty(BaseController):
+    def step(self, production, consumption, datetime_index, duration_hours=0.25):
+        return production, consumption # identity controller
 
 
-class Controller_PV():
+class Controller_PV(BaseController):
     def __init__(self, Battery):
         self.Battery = Battery
 
