@@ -1,11 +1,17 @@
 # Project TODOs
 
-## Bugs & Fixes
-- [x] **Fix energy flow calculation in `example.py`**: 
-  The current calculation for `production2` and `consumption2` can result in negative values when the battery charges from or discharges to the grid. 
-  ```python
-  # Current problematic logic:
-  production2 = production - to_battery + to_grid
-  consumption2 = consumption - from_battery + from_grid
-  ```
-  It should be refactored to calculate a single net grid flow and then split it into non-negative production and consumption values.
+## Optimization & MPC
+- [ ] **Add Battery Degradation Penalty to MPC**: Incorporate a cost factor for battery cycling (e.g., €/kWh throughput) into the MPC objective function to prevent unnecessary micro-cycling.
+- [ ] **Add VAT to MPC Objective**: Ensure the MPC controller accounts for VAT (21%) in its optimization logic to better align with the actual financial model.
+- [ ] **Add Selling Fee (Netbeheerders) to MPC**: Account for the per-kWh selling fees in the optimization.
+
+## Features & Improvements
+- [ ] **Improve Load/PV Forecasting**: Move from "perfect forecast" to a simple persistence or rolling average model for more realistic MPC testing.
+- [ ] **Automate Baseline Generation**: Add a flag to the E2E tests to automatically update the `simulation_baseline.csv` when intended.
+
+## Architecture (Completed)
+- [x] **Unified Simulation Engine**: Created `simulator.py` to centralize grid flow logic.
+- [x] **Structured Results**: Introduced `models.py` for `SimulationResult`.
+- [x] **Decoupled Billing**: Moved financial logic to `billing.py`.
+- [x] **Net Metering Fix**: Corrected energy tax netting in `energy_providers.py`.
+- [x] **Controller Standardization**: Established `BaseController` and moved logic to `controllers/` package.
