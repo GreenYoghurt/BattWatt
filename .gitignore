@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 tests/simulation_baseline.csv
 agent.log
+GEMINI.md
