@@ -10,7 +10,7 @@ class Controller_PV():
     def __init__(self, Battery):
         self.Battery = Battery
 
-    def step(self, production, consumption, duration_hours=0.25):
+    def step(self, production, consumption, datetime_index, duration_hours=0.25):
         # Always net production and consumption first.
         # This ensures that we first use our own production to cover our own consumption.
         common = min(production, consumption)
