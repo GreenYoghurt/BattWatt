@@ -50,6 +50,9 @@ def main() -> None:
     provider = get_providers()["Zonneplan"]
     billing = BillingEngine(provider)
 
+    merged_df['prijs_inkoop'] = (merged_df['day_ahead_price'] + provider.buying_fee) * (1 + 0.21)
+    merged_df['prijs_verkoop'] = (merged_df['day_ahead_price'] - provider.selling_fee) * (1 + 0.21)
+
     # 3. Setup Battery & Controller
     battery = get_battery("Bliq_5kwh")
     # controller = Controller_PV(battery)
