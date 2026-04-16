@@ -5,7 +5,7 @@ from pathlib import Path
 from data_loader import load_meter_data_HomeWizzard, load_price_data, merge_data
 from energy_providers import get_providers
 from battery import Battery, get_battery
-from controller_price import Controller_price
+from controllers.controller_price import Controller_price
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
@@ -32,6 +32,7 @@ def test_battwatt_e2e_simulation():
     controller = Controller_price(bat, merged_df)
     simulator = Simulator(bat, controller)
     result = simulator.run(merged_df)
+
 
     # 3. FINANCIALS
     provider = get_providers()["Zonneplan"]

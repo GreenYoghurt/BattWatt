@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from battery import Battery
-from controller_PV import Controller_PV
+from controllers.controller_PV import Controller_PV
 
 def test_battery_energy_conservation():
     # Setup a battery with some losses (90% efficient charging and discharging)

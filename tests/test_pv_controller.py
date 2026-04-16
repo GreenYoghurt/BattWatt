@@ -5,7 +5,7 @@ from pathlib import Path
 from data_loader import load_meter_data_HomeWizzard, load_price_data, merge_data
 from energy_providers import get_providers
 from battery import Battery, get_battery
-from controller_PV import Controller_PV
+from controllers.controller_PV import Controller_PV
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
