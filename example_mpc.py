@@ -49,7 +49,7 @@ def main() -> None:
     merged_df['prijs_verkoop'] = (merged_df['day_ahead_price'] - provider.selling_fee) * (1 + 0.21)
 
     # 3. Setup Battery & Controller
-    battery = get_battery("Bliq_5kwh")
+    battery = get_battery("Bliq_10kwh_fast")
     
     print(f"Starting MPC Simulation for the full duration...")
     # horizon_hours=24 means it looks ahead 24 hours at every 15-min step

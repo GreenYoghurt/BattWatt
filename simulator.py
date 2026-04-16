@@ -1,5 +1,6 @@
 import pandas as pd
 from models import SimulationResult
+from tqdm import tqdm
 
 class Simulator:
     """
@@ -27,8 +28,8 @@ class Simulator:
         # Initial SoC tracking
         initial_soc_kwh = self.battery.get_soc_kwh()
         
-        # Core simulation loop
-        for index, row in result_df.iterrows():
+        # Core simulation loop with progress bar
+        for index, row in tqdm(result_df.iterrows(), total=len(result_df), desc="Simulating"):
             production = row['teruglevering']
             consumption = row['verbruik']
             

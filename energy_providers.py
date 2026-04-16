@@ -152,8 +152,8 @@ def get_providers():
     Zonneplan = Provider(
         name="Zonneplan",
         subscription_cost=75,  # yearly fixed cost in euros
-        buying_fee=0.0199892,  # cost per kWh bought for the client in euros
-        selling_fee=0.02,      # cost per kWh sold for the client in euros
+        buying_fee=0.0199892,  # cost per kWh bought for the client in euros incl btw
+        selling_fee=0.0199892,      # cost per kWh sold for the client in euros incl btw
         net_metering=False,     # whether net metering applies
         selling_fee_net_metering=True  # whether the provider allows to net meter the selling fee
     )
