@@ -51,27 +51,22 @@ def main() -> None:
     # 3. Setup Battery & Controller
     battery = get_battery("Bliq_5kwh")
     
-    # We'll run MPC for a smaller window (e.g., 2 days) to avoid waiting too long, 
-    # as MPC is much slower than the rule-based controllers.
-    simulation_period_days = 2
-    steps_to_run = int(simulation_period_days * 24 / 0.25)
-    test_df = merged_df.iloc[:steps_to_run].copy()
-    
-    print(f"Starting MPC Simulation for {simulation_period_days} days...")
+    print(f"Starting MPC Simulation for the full duration...")
     # horizon_hours=24 means it looks ahead 24 hours at every 15-min step
-    controller = Controller_MPC(battery, test_df, provider, horizon_hours=24.0)
+    # reoptimize_every_hours=12.0 means we only solve a new optimization once every 12 hours
+    controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
 
     # 4. Run Simulation
     simulator = Simulator(battery, controller)
-    result = simulator.run(test_df)
+    result = simulator.run(merged_df)
 
     # 5. Calculate Financials
     baseline_result = SimulationResult(
-        df=test_df,
-        total_production_kwh=test_df['teruglevering'].sum(),
-        total_consumption_kwh=test_df['verbruik'].sum(),
-        total_adjusted_production_kwh=test_df['teruglevering'].sum(),
-        total_adjusted_consumption_kwh=test_df['verbruik'].sum(),
+        df=merged_df,
+        total_production_kwh=merged_df['teruglevering'].sum(),
+        total_consumption_kwh=merged_df['verbruik'].sum(),
+        total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
+        total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
         final_soc_pct=0,
         final_soc_kwh=0,
         delta_soc_kwh=0
@@ -80,11 +75,11 @@ def main() -> None:
     savings = billing.calculate_savings(baseline_result, result)
     
     # 6. Output & Plotting
-    plot_usage_and_price(test_df)
+    plot_usage_and_price(merged_df)
     plot_battery_effect(result.df)
     
     check_energy_conservation(result)
-    print(f"\nTotal Savings (MPC - {simulation_period_days} days): €{savings:.2f}")
+    print(f"\nTotal Savings (MPC - Full Run): €{savings:.2f}")
     
     show()
 
