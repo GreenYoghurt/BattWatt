@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
+from controller_PV import BaseController
 
-class Controller_price:
+class Controller_price(BaseController):
     def __init__(self, Battery, prices_df: pd.DataFrame):
         self.Battery = Battery
         self.prices_df = prices_df
