@@ -72,6 +72,10 @@ def test_battwatt_e2e_simulation():
     )
 
     savings = total_cost_baseline - total_cost_simulated
+    
+    print(f"\n  Baseline Cost (No Battery): €{total_cost_baseline:.2f}")
+    print(f"  Simulated Cost (With Battery): €{total_cost_simulated:.2f}")
+    print(f"  Total Savings: €{savings:.2f}")
 
     # 5. E2E ASSERTIONS
     
@@ -107,6 +111,15 @@ def test_battwatt_e2e_simulation():
             baseline_df[cols_to_compare].reset_index(drop=True),
             atol=1e-5
         )
-        print("  Regression Check: PASSED (Matches baseline)")
+        
+        # Financial Regression (Hardcoded based on 2025 energy tax and current data)
+        # These values reflect the "Fixed" logic with Net Metering OFF
+        expected_baseline_cost = 443.30
+        expected_simulated_cost = 412.57
+        
+        assert abs(total_cost_baseline - expected_baseline_cost) < 0.05, f"Baseline cost changed! Got {total_cost_baseline}, expected {expected_baseline_cost}"
+        assert abs(total_cost_simulated - expected_simulated_cost) < 0.05, f"Simulated cost changed! Got {total_cost_simulated}, expected {expected_simulated_cost}"
+
+        print("  Regression Check: PASSED (Matches baseline and financial expectations)")
     else:
         print("  Regression Check: SKIPPED (No baseline file found)")

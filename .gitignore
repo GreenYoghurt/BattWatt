@@ -4,3 +4,4 @@ __pycache__/
 *.xlsx
 .DS_Store
 tests/simulation_baseline.csv
+agent.log

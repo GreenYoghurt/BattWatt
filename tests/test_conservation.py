@@ -113,3 +113,31 @@ def test_simulation_conservation():
     delta_soc_perfect = bat_perfect.get_soc_kwh() - 0
     losses_perfect = initial_net - (grid_prod_sum - grid_cons_sum) - delta_soc_perfect
     assert abs(losses_perfect) < 1e-10, f"Energy not balanced in perfect battery! Losses: {losses_perfect}"
+
+from energy_providers import Provider, get_energy_tax_excl_vat, VAT_RATE
+
+def test_financial_calculation_net_metering():
+    # Setup provider with net metering
+    p_net = Provider("TestNet", 0, 0, 0, net_metering=True, selling_fee_net_metering=True)
+    # Setup provider without net metering
+    p_gross = Provider("TestGross", 0, 0, 0, net_metering=False, selling_fee_net_metering=False)
+    
+    # Data: 100 kWh import, 60 kWh export
+    # Price is 0 for simplicity, we only test tax
+    consumption = [100.0]
+    production = [60.0]
+    prices = [0.0]
+    
+    tax_rate = get_energy_tax_excl_vat(2025)
+    
+    cost_net = p_net.calculate_flexible_costs(consumption, production, prices)
+    cost_gross = p_gross.calculate_flexible_costs(consumption, production, prices)
+    
+    # Net: Tax on (100 - 60) = 40 kWh
+    expected_net = 40.0 * tax_rate * (1 + VAT_RATE)
+    # Gross: Tax on 100 kWh
+    expected_gross = 100.0 * tax_rate * (1 + VAT_RATE)
+    
+    assert abs(cost_net - expected_net) < 1e-6, f"Net metering cost incorrect! Got {cost_net}, expected {expected_net}"
+    assert abs(cost_gross - expected_gross) < 1e-6, f"Gross cost incorrect! Got {cost_gross}, expected {expected_gross}"
+    assert cost_net < cost_gross
