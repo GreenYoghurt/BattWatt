@@ -4,8 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 from data_loader import load_meter_data_HomeWizzard, load_price_data, fetch_entsoe_prices, merge_data
-from energy_providers import get_providers
-from battery import get_battery
+from energy_providers import get_providers, Provider
+from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_price, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
@@ -31,15 +31,51 @@ st.sidebar.header("1. Instellingen")
 
 # Battery Selection
 st.sidebar.subheader("Batterij Configuratie")
-battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"]
+battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
 selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=1)
-battery = get_battery(selected_battery_name)
+
+if selected_battery_name == "Handmatig invoeren (Custom)":
+    with st.sidebar.expander("Batterij Details", expanded=True):
+        custom_cap = st.number_input("Capaciteit (kWh)", value=10.0, step=0.5)
+        custom_charge = st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1)
+        custom_discharge = st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1)
+        custom_eff_charge = st.slider("Laadefficiëntie (%)", 80, 100, 98) / 100
+        custom_eff_discharge = st.slider("Ontlaadefficiëntie (%)", 80, 100, 98) / 100
+        
+        battery = Battery(
+            capacity_kwh=custom_cap,
+            max_charge_kw=custom_charge,
+            max_discharge_kw=custom_discharge,
+            efficiency_charging=custom_eff_charge,
+            efficiency_discharging=custom_eff_discharge
+        )
+else:
+    battery = get_battery(selected_battery_name)
 
 # Provider Selection
 st.sidebar.subheader("Energieleverancier")
 providers = get_providers()
-selected_provider_name = st.sidebar.selectbox("Selecteer je leverancier", list(providers.keys()))
-provider = providers[selected_provider_name]
+provider_names = list(providers.keys()) + ["Handmatig invoeren (Custom)"]
+selected_provider_name = st.sidebar.selectbox("Selecteer je leverancier", provider_names)
+
+if selected_provider_name == "Handmatig invoeren (Custom)":
+    with st.sidebar.expander("Provider Details", expanded=True):
+        custom_name = st.text_input("Naam", value="Mijn Leverancier")
+        custom_sub = st.number_input("Vaste leveringskosten (€/jaar)", value=75.0, step=1.0)
+        custom_buy = st.number_input("Inkoop fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
+        custom_sell = st.number_input("Teruglever fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
+        custom_net = st.checkbox("Salderingsregeling (Net Metering)", value=True)
+        
+        provider = Provider(
+            name=custom_name,
+            subscription_cost=custom_sub,
+            buying_fee=custom_buy,
+            selling_fee=custom_sell,
+            net_metering=custom_net,
+            selling_fee_net_metering=True
+        )
+else:
+    provider = providers[selected_provider_name]
 
 # Strategy Selection
 st.sidebar.subheader("Aansturingsstrategie")
@@ -52,11 +88,24 @@ selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_ma
 
 # Simulation Options
 st.sidebar.subheader("Simulatie Opties")
-net_metering = st.sidebar.checkbox("Salderingsregeling inschakelen", value=provider.net_metering)
+# Overwrite provider's net_metering default if manual selection differs
+net_metering = st.sidebar.checkbox("Forceer Salderingsregeling", value=provider.net_metering)
 provider.net_metering = net_metering
 
 # File Uploaders
 st.sidebar.header("2. Data Upload")
+
+with st.sidebar.expander("ℹ️ Hoe lever ik data aan?"):
+    st.markdown("""
+    **P1 Meter Data (HomeWizard CSV)**
+    Exporteer je data vanuit de HomeWizard Energy app. Het bestand moet de volgende kolommen bevatten:
+    - `time`: Datum en tijd (bijv. `2025-01-01 00:00`)
+    - `Import T1 kWh` & `Import T2 kWh`: Cumulatieve meterstanden voor verbruik.
+    - `Export T1 kWh` & `Export T2 kWh`: Cumulatieve meterstanden voor teruglevering.
+    
+    *Opmerking: De simulator berekent automatisch de verbruiksverschillen tussen de intervallen.*
+    """)
+
 uploaded_meter = st.sidebar.file_uploader("Upload P1 Meter Data (HomeWizard CSV)", type=["csv"])
 
 st.sidebar.subheader("Marktprijzen")
@@ -116,7 +165,14 @@ if uploaded_meter:
                 controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
                 
             simulator = Simulator(battery, controller)
-            result = simulator.run(merged_df)
+            
+            # Progress bar for the simulation
+            progress_bar = st.progress(0, text="Simulatie voortgang")
+            def update_progress(current, total):
+                progress_bar.progress(current / total, text=f"Simulatie voortgang: {current}/{total} stappen")
+            
+            result = simulator.run(merged_df, progress_callback=update_progress)
+            progress_bar.empty()
             
             # 5. Calculate Financials
             st.write("Financiële berekeningen uitvoeren...")
@@ -146,6 +202,8 @@ if uploaded_meter:
         col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
         col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
         col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+
+        st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
 
         # Charts
         st.subheader("Interactieve Energieflow")
