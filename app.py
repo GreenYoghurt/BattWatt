@@ -54,6 +54,15 @@ st.sidebar.header("2. Data Upload")
 uploaded_meter = st.sidebar.file_uploader("Upload P1 Meter Data (HomeWizard CSV)", type=["csv"])
 uploaded_price = st.sidebar.file_uploader("Upload Market Prices (ENTSO-E Excel)", type=["xlsx"])
 
+# Credits & Logo
+st.sidebar.markdown("---")
+col1, col2 = st.sidebar.columns([1, 3])
+with col1:
+    st.image("assets/tudelft_logo.png", width=70)
+with col2:
+    st.markdown("**Developed by:**  \n[Jort Groen](https://github.com/JortGroen)")
+    st.caption("Delft University of Technology")
+
 # Sample Data Button (Optional helper)
 if not uploaded_meter or not uploaded_price:
     st.info("Please upload your data files in the sidebar to run the simulation.")
