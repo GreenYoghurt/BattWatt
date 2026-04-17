@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 from data_loader import load_meter_data_HomeWizzard, load_price_data, fetch_entsoe_prices, merge_data
-from energy_providers import get_providers
+from energy_providers import get_providers, Provider
 from battery import get_battery
 from controllers import Controller_PV, Controller_price, Controller_MPC
 from simulator import Simulator
@@ -38,8 +38,27 @@ battery = get_battery(selected_battery_name)
 # Provider Selection
 st.sidebar.subheader("Energieleverancier")
 providers = get_providers()
-selected_provider_name = st.sidebar.selectbox("Selecteer je leverancier", list(providers.keys()))
-provider = providers[selected_provider_name]
+provider_names = list(providers.keys()) + ["Handmatig invoeren (Custom)"]
+selected_provider_name = st.sidebar.selectbox("Selecteer je leverancier", provider_names)
+
+if selected_provider_name == "Handmatig invoeren (Custom)":
+    with st.sidebar.expander("Provider Details", expanded=True):
+        custom_name = st.text_input("Naam", value="Mijn Leverancier")
+        custom_sub = st.number_input("Vaste leveringskosten (€/jaar)", value=75.0, step=1.0)
+        custom_buy = st.number_input("Inkoop fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
+        custom_sell = st.number_input("Teruglever fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
+        custom_net = st.checkbox("Salderingsregeling (Net Metering)", value=True)
+        
+        provider = Provider(
+            name=custom_name,
+            subscription_cost=custom_sub,
+            buying_fee=custom_buy,
+            selling_fee=custom_sell,
+            net_metering=custom_net,
+            selling_fee_net_metering=True
+        )
+else:
+    provider = providers[selected_provider_name]
 
 # Strategy Selection
 st.sidebar.subheader("Aansturingsstrategie")
@@ -52,11 +71,24 @@ selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_ma
 
 # Simulation Options
 st.sidebar.subheader("Simulatie Opties")
-net_metering = st.sidebar.checkbox("Salderingsregeling inschakelen", value=provider.net_metering)
+# Overwrite provider's net_metering default if manual selection differs
+net_metering = st.sidebar.checkbox("Forceer Salderingsregeling", value=provider.net_metering)
 provider.net_metering = net_metering
 
 # File Uploaders
 st.sidebar.header("2. Data Upload")
+
+with st.sidebar.expander("ℹ️ Hoe lever ik data aan?"):
+    st.markdown("""
+    **P1 Meter Data (HomeWizard CSV)**
+    Exporteer je data vanuit de HomeWizard Energy app. Het bestand moet de volgende kolommen bevatten:
+    - `time`: Datum en tijd (bijv. `2025-01-01 00:00`)
+    - `Import T1 kWh` & `Import T2 kWh`: Cumulatieve meterstanden voor verbruik.
+    - `Export T1 kWh` & `Export T2 kWh`: Cumulatieve meterstanden voor teruglevering.
+    
+    *Opmerking: De simulator berekent automatisch de verbruiksverschillen tussen de intervallen.*
+    """)
+
 uploaded_meter = st.sidebar.file_uploader("Upload P1 Meter Data (HomeWizard CSV)", type=["csv"])
 
 st.sidebar.subheader("Marktprijzen")
