@@ -11,11 +11,9 @@ from billing import BillingEngine
 from models import SimulationResult
 
 # Paths to the real data
-PATH_PRICE = Path("../example/day_ahead_2025.xlsx")
-PATH_DATA = Path("../example/P1e-2025-1-01-2026-1-01.csv")
+PATH_PRICE = Path("tests/data/day_ahead_2025.xlsx")
+PATH_DATA = Path("tests/data/test_2025.csv")
 
-@pytest.mark.skipif(not PATH_PRICE.exists() or not PATH_DATA.exists(), 
-                    reason="Real data files not found in ../example/")
 def test_battwatt_pv_controller_e2e():
     """
     E2E test specifically for the Controller_PV strategy using the Simulator.
