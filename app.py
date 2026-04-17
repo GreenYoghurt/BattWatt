@@ -117,7 +117,7 @@ if price_source == "Handmatig uploaden (.xlsx)":
 # Credits & Logo
 st.sidebar.markdown("---")
 st.sidebar.image("assets/tudelft_logo.png", width=250)
-st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)")
+st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)\n[Brecht Goethals](https://github.com/Brecht1949)")
 st.sidebar.caption("Technische Universiteit Delft")
 
 if uploaded_meter:
