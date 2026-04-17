@@ -60,86 +60,83 @@ st.sidebar.image("assets/tudelft_logo.png", width=250)
 st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)")
 st.sidebar.caption("Technische Universiteit Delft")
 
-# Sample Data Button (Optional helper)
-if not uploaded_meter or not uploaded_price:
-    st.info("Upload je gegevensbestanden in de zijbalk om de simulatie te starten.")
-    if st.button("Gebruik Voorbeelddata (2025 Placeholder)"):
-        st.warning("Voorbeeldpad nog niet geconfigureerd. Upload a.u.b. bestanden.")
-
 if uploaded_meter and uploaded_price:
-    with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-        # Load Data
-        st.write("Bestanden inlezen...")
-        price_df = load_price_data(uploaded_price)
-        meter_df = load_meter_data_HomeWizzard(uploaded_meter)
-        
-        st.write("Data samenvoegen...")
-        merged_df = merge_data(meter_df, price_df)
-        merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
-        merged_df.set_index("timestamp", drop=False, inplace=True)
-        
-        st.write(f"Uitvoeren van {selected_strategy} simulatie...")
-        # Setup Controller
-        if strategy_map[selected_strategy] == "PV":
-            controller = Controller_PV(battery)
-        elif strategy_map[selected_strategy] == "Price":
-            controller = Controller_price(battery, merged_df)
-        else: # MPC
-            controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
+    if st.sidebar.button("🚀 Simuleer", use_container_width=True):
+        with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
+            # Load Data
+            st.write("Bestanden inlezen...")
+            price_df = load_price_data(uploaded_price)
+            meter_df = load_meter_data_HomeWizzard(uploaded_meter)
             
-        simulator = Simulator(battery, controller)
-        result = simulator.run(merged_df)
+            st.write("Data samenvoegen...")
+            merged_df = merge_data(meter_df, price_df)
+            merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
+            merged_df.set_index("timestamp", drop=False, inplace=True)
+            
+            st.write(f"Uitvoeren van {selected_strategy} simulatie...")
+            # Setup Controller
+            if strategy_map[selected_strategy] == "PV":
+                controller = Controller_PV(battery)
+            elif strategy_map[selected_strategy] == "Price":
+                controller = Controller_price(battery, merged_df)
+            else: # MPC
+                controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
+                
+            simulator = Simulator(battery, controller)
+            result = simulator.run(merged_df)
+            
+            # Calculate Financials
+            st.write("Financiële berekeningen uitvoeren...")
+            billing = BillingEngine(provider)
+            
+            baseline_result = SimulationResult(
+                df=merged_df,
+                total_production_kwh=merged_df['teruglevering'].sum(),
+                total_consumption_kwh=merged_df['verbruik'].sum(),
+                total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
+                total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+                final_soc_pct=0,
+                final_soc_kwh=0,
+                delta_soc_kwh=0
+            )
+            
+            cost_baseline = billing.calculate_bill(baseline_result)
+            cost_simulated = billing.calculate_bill(result)
+            savings = cost_baseline - cost_simulated
+            
+            status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
+
+        # Display Results
+        st.header("Resultaten Overzicht")
         
-        # Calculate Financials
-        st.write("Financiële berekeningen uitvoeren...")
-        billing = BillingEngine(provider)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
+        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
+        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+
+        # Charts
+        st.subheader("Interactieve Energieflow")
         
-        baseline_result = SimulationResult(
-            df=merged_df,
-            total_production_kwh=merged_df['teruglevering'].sum(),
-            total_consumption_kwh=merged_df['verbruik'].sum(),
-            total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-            total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
-            final_soc_pct=0,
-            final_soc_kwh=0,
-            delta_soc_kwh=0
+        fig = go.Figure()
+        # Market Price
+        fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['day_ahead_price'], 
+                                 name="Marktprijs (€/kWh)", yaxis="y2", line=dict(color='rgba(200, 200, 200, 0.5)')))
+        # Battery SoC
+        fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['battery_soc'], 
+                                 name="Batterij SoC (kWh)", fill='tozeroy', line=dict(color='green')))
+        
+        fig.update_layout(
+            title="Batterij Laadtoestand (SoC) vs Marktprijs",
+            xaxis_title="Tijd",
+            yaxis=dict(title="SoC (kWh)", side="left"),
+            yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
+            legend=dict(x=0, y=1.1, orientation="h")
         )
         
-        cost_baseline = billing.calculate_bill(baseline_result)
-        cost_simulated = billing.calculate_bill(result)
-        savings = cost_baseline - cost_simulated
-        
-        status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Display Results
-    st.header("Resultaten Overzicht")
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
-    col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
-    col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
-
-    # Charts
-    st.subheader("Interactieve Energieflow")
-    
-    fig = go.Figure()
-    # Market Price
-    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['day_ahead_price'], 
-                             name="Marktprijs (€/kWh)", yaxis="y2", line=dict(color='rgba(200, 200, 200, 0.5)')))
-    # Battery SoC
-    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['battery_soc'], 
-                             name="Batterij SoC (kWh)", fill='tozeroy', line=dict(color='green')))
-    
-    fig.update_layout(
-        title="Batterij Laadtoestand (SoC) vs Marktprijs",
-        xaxis_title="Tijd",
-        yaxis=dict(title="SoC (kWh)", side="left"),
-        yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
-        legend=dict(x=0, y=1.1, orientation="h")
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Data Table
-    with st.expander("Bekijk Ruwe Simulatiedata"):
-        st.dataframe(result.df.head(100))
+        # Data Table
+        with st.expander("Bekijk Ruwe Simulatiedata"):
+            st.dataframe(result.df.head(100))
+else:
+    st.info("Upload je gegevensbestanden in de zijbalk en klik op 'Simuleer' om de berekening te starten.")
