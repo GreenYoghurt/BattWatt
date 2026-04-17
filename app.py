@@ -56,12 +56,9 @@ uploaded_price = st.sidebar.file_uploader("Upload Market Prices (ENTSO-E Excel)"
 
 # Credits & Logo
 st.sidebar.markdown("---")
-col1, col2 = st.sidebar.columns([1, 3])
-with col1:
-    st.image("assets/tudelft_logo.png", width=70)
-with col2:
-    st.markdown("**Developed by:**  \n[Jort Groen](https://github.com/JortGroen)")
-    st.caption("Delft University of Technology")
+st.sidebar.image("assets/tudelft_logo.png", width=250)
+st.sidebar.markdown("**Developed by:**  \n[Jort Groen](https://github.com/JortGroen)")
+st.sidebar.caption("Delft University of Technology")
 
 # Sample Data Button (Optional helper)
 if not uploaded_meter or not uploaded_price:
