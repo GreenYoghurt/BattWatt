@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
-from data_loader import load_meter_data_HomeWizzard, load_price_data, merge_data
+from data_loader import load_meter_data_HomeWizzard, load_price_data, fetch_entsoe_prices, merge_data
 from energy_providers import get_providers
 from battery import get_battery
 from controllers import Controller_PV, Controller_price, Controller_MPC
@@ -13,6 +13,12 @@ from models import SimulationResult
 
 # Page configuration
 st.set_page_config(page_title="BattWatt - Batterij Evaluator", layout="wide")
+
+# Handle Secrets / API Key
+try:
+    ENTSOE_API_KEY = st.secrets["ENTSOE_API_KEY"]
+except Exception:
+    ENTSOE_API_KEY = None
 
 st.title("🔋 BattWatt: Thuisbatterij Evaluator")
 st.markdown("""
@@ -52,7 +58,12 @@ provider.net_metering = net_metering
 # File Uploaders
 st.sidebar.header("2. Data Upload")
 uploaded_meter = st.sidebar.file_uploader("Upload P1 Meter Data (HomeWizard CSV)", type=["csv"])
-uploaded_price = st.sidebar.file_uploader("Upload Marktprijzen (ENTSO-E Excel)", type=["xlsx"])
+
+st.sidebar.subheader("Marktprijzen")
+price_source = st.sidebar.radio("Bron marktprijzen", ["Automatisch (ENTSO-E API)", "Handmatig uploaden (.xlsx)"])
+uploaded_price = None
+if price_source == "Handmatig uploaden (.xlsx)":
+    uploaded_price = st.sidebar.file_uploader("Upload Marktprijzen (ENTSO-E Excel)", type=["xlsx"])
 
 # Credits & Logo
 st.sidebar.markdown("---")
@@ -60,21 +71,43 @@ st.sidebar.image("assets/tudelft_logo.png", width=250)
 st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)")
 st.sidebar.caption("Technische Universiteit Delft")
 
-if uploaded_meter and uploaded_price:
-    if st.sidebar.button("🚀 Simuleer", use_container_width=True):
+if uploaded_meter:
+    # Check if we have everything needed to simulate
+    can_simulate = True
+    if price_source == "Automatisch (ENTSO-E API)" and not ENTSOE_API_KEY:
+        st.sidebar.error("⚠️ Geen API Key geconfigureerd.")
+        can_simulate = False
+    elif price_source == "Handmatig uploaden (.xlsx)" and not uploaded_price:
+        can_simulate = False
+
+    if st.sidebar.button("🚀 Simuleer", use_container_width=True, disabled=not can_simulate):
         with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-            # Load Data
-            st.write("Bestanden inlezen...")
-            price_df = load_price_data(uploaded_price)
+            # 1. Load Meter Data
+            st.write("Meterdata inlezen...")
             meter_df = load_meter_data_HomeWizzard(uploaded_meter)
             
+            # 2. Get Price Data
+            if price_source == "Automatisch (ENTSO-E API)":
+                start_date = meter_df['timestamp'].min()
+                end_date = meter_df['timestamp'].max()
+                st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
+                try:
+                    price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
+                except Exception as e:
+                    st.error(f"Fout bij ophalen prijzen: {e}")
+                    st.stop()
+            else:
+                st.write("Marktprijzen inlezen uit bestand...")
+                price_df = load_price_data(uploaded_price)
+            
+            # 3. Merge Data
             st.write("Data samenvoegen...")
             merged_df = merge_data(meter_df, price_df)
             merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
             merged_df.set_index("timestamp", drop=False, inplace=True)
             
             st.write(f"Uitvoeren van {selected_strategy} simulatie...")
-            # Setup Controller
+            # 4. Setup Controller & Run Simulation
             if strategy_map[selected_strategy] == "PV":
                 controller = Controller_PV(battery)
             elif strategy_map[selected_strategy] == "Price":
@@ -85,7 +118,7 @@ if uploaded_meter and uploaded_price:
             simulator = Simulator(battery, controller)
             result = simulator.run(merged_df)
             
-            # Calculate Financials
+            # 5. Calculate Financials
             st.write("Financiële berekeningen uitvoeren...")
             billing = BillingEngine(provider)
             
@@ -139,4 +172,4 @@ if uploaded_meter and uploaded_price:
         with st.expander("Bekijk Ruwe Simulatiedata"):
             st.dataframe(result.df.head(100))
 else:
-    st.info("Upload je gegevensbestanden in de zijbalk en klik op 'Simuleer' om de berekening te starten.")
+    st.info("Upload je P1-metergegevens in de zijbalk om de berekening te starten.")

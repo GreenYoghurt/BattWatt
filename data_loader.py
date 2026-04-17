@@ -1,6 +1,44 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from entsoe import EntsoePandasClient
+
+def fetch_entsoe_prices(api_key: str, start_date: pd.Timestamp, end_date: pd.Timestamp, country_code: str = 'NL') -> pd.DataFrame:
+    """
+    Fetch day-ahead electricity prices from ENTSO-E API.
+    
+    Parameters:
+    - api_key: Your ENTSO-E API key.
+    - start_date: Start of the period (timezone-aware recommended).
+    - end_date: End of the period (timezone-aware recommended).
+    - country_code: Bidding zone code (default 'NL').
+    
+    Returns:
+    - DataFrame with 'timestamp' and 'day_ahead_price' (EUR/MWh).
+    """
+    client = EntsoePandasClient(api_key=api_key)
+    
+    # Ensure timestamps are timezone-aware (ENTSO-E requires this)
+    if start_date.tz is None:
+        start_date = start_date.tz_localize('Europe/Amsterdam')
+    if end_date.tz is None:
+        end_date = end_date.tz_localize('Europe/Amsterdam')
+
+    # Query prices
+    try:
+        prices_series = client.query_day_ahead_prices(country_code, start=start_date, end=end_date)
+    except Exception as e:
+        raise RuntimeError(f"Error fetching data from ENTSO-E: {e}")
+
+    # Convert Series to DataFrame
+    df = prices_series.reset_index()
+    df.columns = ['timestamp', 'day_ahead_price']
+    
+    # Standardize to local time (naive) for internal processing if needed, 
+    # but keeping it aware is safer for merging.
+    df['timestamp'] = df['timestamp'].dt.tz_convert(None)
+    
+    return df
 
 def load_price_data(path: Path) -> pd.DataFrame:
     """
