@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from data_loader import load_meter_data_HomeWizzard, load_price_data, fetch_entsoe_prices, merge_data
 from energy_providers import get_providers, Provider
-from battery import get_battery
+from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_price, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
@@ -31,9 +31,26 @@ st.sidebar.header("1. Instellingen")
 
 # Battery Selection
 st.sidebar.subheader("Batterij Configuratie")
-battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"]
+battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
 selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=1)
-battery = get_battery(selected_battery_name)
+
+if selected_battery_name == "Handmatig invoeren (Custom)":
+    with st.sidebar.expander("Batterij Details", expanded=True):
+        custom_cap = st.number_input("Capaciteit (kWh)", value=10.0, step=0.5)
+        custom_charge = st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1)
+        custom_discharge = st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1)
+        custom_eff_charge = st.slider("Laadefficiëntie (%)", 80, 100, 98) / 100
+        custom_eff_discharge = st.slider("Ontlaadefficiëntie (%)", 80, 100, 98) / 100
+        
+        battery = Battery(
+            capacity_kwh=custom_cap,
+            max_charge_kw=custom_charge,
+            max_discharge_kw=custom_discharge,
+            efficiency_charging=custom_eff_charge,
+            efficiency_discharging=custom_eff_discharge
+        )
+else:
+    battery = get_battery(selected_battery_name)
 
 # Provider Selection
 st.sidebar.subheader("Energieleverancier")
