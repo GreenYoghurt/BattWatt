@@ -116,7 +116,14 @@ if uploaded_meter:
                 controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
                 
             simulator = Simulator(battery, controller)
-            result = simulator.run(merged_df)
+            
+            # Progress bar for the simulation
+            progress_bar = st.progress(0, text="Simulatie voortgang")
+            def update_progress(current, total):
+                progress_bar.progress(current / total, text=f"Simulatie voortgang: {current}/{total} stappen")
+            
+            result = simulator.run(merged_df, progress_callback=update_progress)
+            progress_bar.empty()
             
             # 5. Calculate Financials
             st.write("Financiële berekeningen uitvoeren...")

@@ -11,13 +11,14 @@ class Simulator:
         self.battery = battery
         self.controller = controller
 
-    def run(self, df: pd.DataFrame, duration_hours: float = 0.25) -> SimulationResult:
+    def run(self, df: pd.DataFrame, duration_hours: float = 0.25, progress_callback: callable = None) -> SimulationResult:
         """
         Runs the simulation.
         
         Args:
             df: DataFrame containing 'teruglevering' (production) and 'verbruik' (consumption) columns.
             duration_hours: The interval duration in hours (e.g. 0.25 for 15 minutes).
+            progress_callback: Optional function that takes (current_index, total_steps) for progress reporting.
             
         Returns:
             A SimulationResult object containing the updated DataFrame and totals.
@@ -28,8 +29,18 @@ class Simulator:
         # Initial SoC tracking
         initial_soc_kwh = self.battery.get_soc_kwh()
         
-        # Core simulation loop with progress bar
-        for index, row in tqdm(result_df.iterrows(), total=len(result_df), desc="Simulating"):
+        # Core simulation loop
+        total_steps = len(result_df)
+        
+        # Use tqdm if no progress_callback is provided
+        iterable = result_df.iterrows()
+        if progress_callback is None:
+            iterable = tqdm(iterable, total=total_steps, desc="Simulating")
+
+        for i, (index, row) in enumerate(iterable):
+            if progress_callback:
+                progress_callback(i + 1, total_steps)
+                
             production = row['teruglevering']
             consumption = row['verbruik']
             
