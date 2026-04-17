@@ -186,6 +186,8 @@ if uploaded_meter:
         col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
         col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
 
+        st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
+
         # Charts
         st.subheader("Interactieve Energieflow")
         
