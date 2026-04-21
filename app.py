@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
-from data_loader import load_meter_data_HomeWizzard, load_price_data, fetch_entsoe_prices, merge_data
+from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data
 from energy_providers import get_providers, Provider
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_price, Controller_MPC
@@ -95,18 +95,40 @@ provider.net_metering = net_metering
 # File Uploaders
 st.sidebar.header("2. Data Upload")
 
-with st.sidebar.expander("ℹ️ Hoe lever ik data aan?"):
-    st.markdown("""
-    **P1 Meter Data (HomeWizard CSV)**
-    Exporteer je data vanuit de HomeWizard Energy app. Het bestand moet de volgende kolommen bevatten:
-    - `time`: Datum en tijd (bijv. `2025-01-01 00:00`)
-    - `Import T1 kWh` & `Import T2 kWh`: Cumulatieve meterstanden voor verbruik.
-    - `Export T1 kWh` & `Export T2 kWh`: Cumulatieve meterstanden voor teruglevering.
-    
-    *Opmerking: De simulator berekent automatisch de verbruiksverschillen tussen de intervallen.*
-    """)
+uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
 
-uploaded_meter = st.sidebar.file_uploader("Upload P1 Meter Data (HomeWizard CSV)", type=["csv"])
+with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
+    st.markdown("""
+    **Automatisch Herkend:**
+    - HomeWizard CSV (Export uit app)
+    - Standaard DSO Excel (datum_tijd, levering_normaal, etc.)
+    
+    **Ander formaat?** Gebruik de 'Aangepaste Mapping' hieronder.
+    """)
+with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
+    st.info("Alleen nodig als je bestand niet automatisch wordt herkend.")
+    use_custom_mapping = st.checkbox("Gebruik handmatige mapping", value=False)
+    fmt = st.selectbox("Bestandstype", ["csv", "excel"], index=0)
+    sep = st.text_input("Scheidingsteken (alleen CSV)", value=";")
+    dec = st.text_input("Decimaalteken", value=",")
+    col_time = st.text_input("Kolomnaam Tijdstip", value="datum_tijd")
+    col_imp = st.text_input("Kolomnaam Verbruik/Import", value="verbruik")
+    col_exp = st.text_input("Kolomnaam Teruglevering/Export", value="teruglevering")
+    is_cum = st.checkbox("Meterstanden zijn cumulatief", value=False)
+
+    custom_mapping = None
+    if use_custom_mapping:
+        custom_mapping = {
+            "format": fmt,
+            "delimiter": sep,
+            "decimal": dec,
+            "columns": {
+                "timestamp": col_time,
+                "import": col_imp,
+                "export": col_exp
+            },
+            "is_cumulative": is_cum
+        }
 
 st.sidebar.subheader("Marktprijzen")
 price_source = st.sidebar.radio("Bron marktprijzen", ["Automatisch (ENTSO-E API)", "Handmatig uploaden (.xlsx)"])
@@ -133,7 +155,11 @@ if uploaded_meter:
         with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
             # 1. Load Meter Data
             st.write("Meterdata inlezen...")
-            meter_df = load_meter_data_HomeWizzard(uploaded_meter)
+            try:
+                meter_df = SmartLoader.load(uploaded_meter, config=custom_mapping)
+            except Exception as e:
+                st.error(f"Fout bij inlezen meterdata: {e}")
+                st.stop()
             
             # 2. Get Price Data
             if price_source == "Automatisch (ENTSO-E API)":
