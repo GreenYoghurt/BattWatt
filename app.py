@@ -10,9 +10,49 @@ from controllers import Controller_PV, Controller_price, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
+import base64
 
 # Page configuration
-st.set_page_config(page_title="BattWatt - Batterij Evaluator", layout="wide")
+st.set_page_config(page_title="BattWatt - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
+
+# Helper to load images for CSS
+def get_base64_of_bin_file(bin_file):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+# Logo theme switching via CSS
+try:
+    logo_dark = get_base64_of_bin_file("assets/tudelft_logo.png")
+    logo_light = get_base64_of_bin_file("assets/tudelft_logo_black.png")
+    
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stSidebarNav"] {{
+            padding-top: 20px;
+        }}
+        .logo-container {{
+            text-align: center;
+            padding: 10px;
+        }}
+        .logo-img {{
+            width: 200px;
+        }}
+        @media (prefers-color-scheme: dark) {{
+            .logo-light {{ display: none; }}
+            .logo-dark {{ display: block; }}
+        }}
+        @media (prefers-color-scheme: light) {{
+            .logo-light {{ display: block; }}
+            .logo-dark {{ display: none; }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+except Exception:
+    pass
 
 # Handle Secrets / API Key
 try:
@@ -27,10 +67,10 @@ Upload je P1-metergegevens om te beginnen.
 """)
 
 # Sidebar: Configuration
-st.sidebar.header("1. Instellingen")
+st.sidebar.header("1. Configuratie")
 
 # Battery Selection
-st.sidebar.subheader("Batterij Configuratie")
+st.sidebar.subheader("Batterij")
 battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
 selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=1)
 
@@ -78,7 +118,7 @@ else:
     provider = providers[selected_provider_name]
 
 # Strategy Selection
-st.sidebar.subheader("Aansturingsstrategie")
+st.sidebar.subheader("Aansturing")
 strategy_map = {
     "PV Prioriteit (Zelfconsumptie)": "PV",
     "Prijs Arbitrage (Regelgebaseerd)": "Price",
@@ -87,14 +127,21 @@ strategy_map = {
 selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_map.keys()))
 
 # Simulation Options
-st.sidebar.subheader("Simulatie Opties")
-# Overwrite provider's net_metering default if manual selection differs
-net_metering = st.sidebar.checkbox("Forceer Salderingsregeling", value=provider.net_metering)
+net_metering = st.sidebar.toggle("Salderingsregeling toepassen", value=provider.net_metering)
 provider.net_metering = net_metering
 
-# File Uploaders
-st.sidebar.header("2. Data Upload")
+st.sidebar.divider()
 
+# File Uploaders
+st.sidebar.header("2. Data Input")
+
+st.sidebar.subheader("Marktprijzen")
+price_source = st.sidebar.radio("Bron marktprijzen", ["Automatisch (ENTSO-E API)", "Handmatig uploaden (.xlsx)"])
+uploaded_price = None
+if price_source == "Handmatig uploaden (.xlsx)":
+    uploaded_price = st.sidebar.file_uploader("Upload Marktprijzen (ENTSO-E Excel)", type=["xlsx"])
+
+st.sidebar.subheader("Meter Data")
 uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
 
 with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
@@ -130,20 +177,11 @@ with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
             "is_cumulative": is_cum
         }
 
-st.sidebar.subheader("Marktprijzen")
-price_source = st.sidebar.radio("Bron marktprijzen", ["Automatisch (ENTSO-E API)", "Handmatig uploaden (.xlsx)"])
-uploaded_price = None
-if price_source == "Handmatig uploaden (.xlsx)":
-    uploaded_price = st.sidebar.file_uploader("Upload Marktprijzen (ENTSO-E Excel)", type=["xlsx"])
+st.sidebar.divider()
 
-# Credits & Logo
-st.sidebar.markdown("---")
-st.sidebar.image("assets/tudelft_logo.png", width=250)
-st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)\n[Brecht Goethals](https://github.com/Brecht1949)")
-st.sidebar.caption("Technische Universiteit Delft")
-
+# Simulation Button
+can_simulate = False
 if uploaded_meter:
-    # Check if we have everything needed to simulate
     can_simulate = True
     if price_source == "Automatisch (ENTSO-E API)" and not ENTSOE_API_KEY:
         st.sidebar.error("⚠️ Geen API Key geconfigureerd.")
@@ -151,109 +189,153 @@ if uploaded_meter:
     elif price_source == "Handmatig uploaden (.xlsx)" and not uploaded_price:
         can_simulate = False
 
-    if st.sidebar.button("🚀 Simuleer", use_container_width=True, disabled=not can_simulate):
-        with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-            # 1. Load Meter Data
-            st.write("Meterdata inlezen...")
+if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
+    with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
+        # 1. Load Meter Data
+        st.write("Meterdata inlezen...")
+        try:
+            meter_df = SmartLoader.load(uploaded_meter, config=custom_mapping)
+        except Exception as e:
+            st.error(f"Fout bij inlezen meterdata: {e}")
+            st.stop()
+        
+        # 2. Get Price Data
+        if price_source == "Automatisch (ENTSO-E API)":
+            start_date = meter_df['timestamp'].min()
+            end_date = meter_df['timestamp'].max()
+            st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
             try:
-                meter_df = SmartLoader.load(uploaded_meter, config=custom_mapping)
+                price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
             except Exception as e:
-                st.error(f"Fout bij inlezen meterdata: {e}")
+                st.error(f"Fout bij ophalen prijzen: {e}")
                 st.stop()
-            
-            # 2. Get Price Data
-            if price_source == "Automatisch (ENTSO-E API)":
-                start_date = meter_df['timestamp'].min()
-                end_date = meter_df['timestamp'].max()
-                st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
-                try:
-                    price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
-                except Exception as e:
-                    st.error(f"Fout bij ophalen prijzen: {e}")
-                    st.stop()
-            else:
-                st.write("Marktprijzen inlezen uit bestand...")
-                price_df = load_price_data(uploaded_price)
-            
-            # 3. Merge Data
-            st.write("Data samenvoegen...")
-            merged_df = merge_data(meter_df, price_df)
-            merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
-            merged_df.set_index("timestamp", drop=False, inplace=True)
-            
-            st.write(f"Uitvoeren van {selected_strategy} simulatie...")
-            # 4. Setup Controller & Run Simulation
-            if strategy_map[selected_strategy] == "PV":
-                controller = Controller_PV(battery)
-            elif strategy_map[selected_strategy] == "Price":
-                controller = Controller_price(battery, merged_df)
-            else: # MPC
-                controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
-                
-            simulator = Simulator(battery, controller)
-            
-            # Progress bar for the simulation
-            progress_bar = st.progress(0, text="Simulatie voortgang")
-            def update_progress(current, total):
-                progress_bar.progress(current / total, text=f"Simulatie voortgang: {current}/{total} stappen")
-            
-            result = simulator.run(merged_df, progress_callback=update_progress)
-            progress_bar.empty()
-            
-            # 5. Calculate Financials
-            st.write("Financiële berekeningen uitvoeren...")
-            billing = BillingEngine(provider)
-            
-            baseline_result = SimulationResult(
-                df=merged_df,
-                total_production_kwh=merged_df['teruglevering'].sum(),
-                total_consumption_kwh=merged_df['verbruik'].sum(),
-                total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-                total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
-                final_soc_pct=0,
-                final_soc_kwh=0,
-                delta_soc_kwh=0
-            )
-            
-            cost_baseline = billing.calculate_bill(baseline_result)
-            cost_simulated = billing.calculate_bill(result)
-            savings = cost_baseline - cost_simulated
-            
-            status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
-
-        # Display Results
-        st.header("Resultaten Overzicht")
+        else:
+            st.write("Marktprijzen inlezen uit bestand...")
+            price_df = load_price_data(uploaded_price)
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
-        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
-        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
-
-        st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
-
-        # Charts
-        st.subheader("Interactieve Energieflow")
+        # 3. Merge Data
+        st.write("Data samenvoegen...")
+        merged_df = merge_data(meter_df, price_df)
+        merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
+        merged_df.set_index("timestamp", drop=False, inplace=True)
         
-        fig = go.Figure()
-        # Market Price
-        fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['day_ahead_price'], 
-                                 name="Marktprijs (€/kWh)", yaxis="y2", line=dict(color='rgba(200, 200, 200, 0.5)')))
-        # Battery SoC
-        fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['battery_soc'], 
-                                 name="Batterij SoC (kWh)", fill='tozeroy', line=dict(color='green')))
+        st.write(f"Uitvoeren van {selected_strategy} simulatie...")
+        # 4. Setup Controller & Run Simulation
+        if strategy_map[selected_strategy] == "PV":
+            controller = Controller_PV(battery)
+        elif strategy_map[selected_strategy] == "Price":
+            controller = Controller_price(battery, merged_df)
+        else: # MPC
+            controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
+            
+        simulator = Simulator(battery, controller)
         
-        fig.update_layout(
-            title="Batterij Laadtoestand (SoC) vs Marktprijs",
-            xaxis_title="Tijd",
-            yaxis=dict(title="SoC (kWh)", side="left"),
-            yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
-            legend=dict(x=0, y=1.1, orientation="h")
+        # Progress bar for the simulation
+        progress_bar = st.progress(0, text="Simulatie voortgang")
+        def update_progress(current, total):
+            progress_bar.progress(current / total, text=f"Simulatie voortgang: {current}/{total} stappen")
+        
+        result = simulator.run(merged_df, progress_callback=update_progress)
+        progress_bar.empty()
+        
+        # 5. Calculate Financials
+        st.write("Financiële berekeningen uitvoeren...")
+        billing = BillingEngine(provider)
+        
+        baseline_result = SimulationResult(
+            df=merged_df,
+            total_production_kwh=merged_df['teruglevering'].sum(),
+            total_consumption_kwh=merged_df['verbruik'].sum(),
+            total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
+            total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+            final_soc_pct=0,
+            final_soc_kwh=0,
+            delta_soc_kwh=0
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        cost_baseline = billing.calculate_bill(baseline_result)
+        cost_simulated = billing.calculate_bill(result)
+        savings = cost_baseline - cost_simulated
+        
+        status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
 
-        # Data Table
-        with st.expander("Bekijk Ruwe Simulatiedata"):
-            st.dataframe(result.df.head(100))
-else:
-    st.info("Upload je P1-metergegevens in de zijbalk om de berekening te starten.")
+        # Store in session state for persistence between re-runs
+        st.session_state['simulation_result'] = {
+            'result': result,
+            'cost_baseline': cost_baseline,
+            'cost_simulated': cost_simulated,
+            'savings': savings,
+            'strategy': strategy_map[selected_strategy]
+        }
+
+# Credits & Logo
+st.sidebar.markdown("---")
+try:
+    st.sidebar.markdown(
+        f"""
+        <div class="logo-container">
+            <img class="logo-img logo-dark" src="data:image/png;base64,{logo_dark}">
+            <img class="logo-img logo-light" src="data:image/png;base64,{logo_light}">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+except Exception:
+    st.sidebar.image("assets/tudelft_logo.png", width=250)
+
+st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)\n[Brecht Goethals](https://github.com/Brecht1949)")
+st.sidebar.caption("Technische Universiteit Delft")
+
+# Main Area Display
+if 'simulation_result' in st.session_state:
+    res_data = st.session_state['simulation_result']
+    result = res_data['result']
+    cost_baseline = res_data['cost_baseline']
+    cost_simulated = res_data['cost_simulated']
+    savings = res_data['savings']
+    strategy = res_data.get('strategy', 'PV')
+
+    # Display Results
+    st.header("Resultaten Overzicht")
+    
+    # Check if we need a 4th column for realistic MPC savings
+    if strategy == "MPC":
+        col1, col2, col3, col4 = st.columns(4)
+        realistic_savings = savings * 0.8
+        col4.metric("Realistische Besparing (80%)", f"€{realistic_savings:.2f}", 
+                   help="In de werkelijkheid kan een algoritme nooit een perfecte voorspelling doen van het energieverbruik en de zonne-opbrengst. Deze waarde geeft een realistischer beeld van de te verwachten besparing.")
+    else:
+        col1, col2, col3 = st.columns(3)
+
+    col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
+    col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
+    col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+
+    st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
+
+    # Charts
+    st.subheader("Interactieve Energieflow")
+    
+    fig = go.Figure()
+    # Market Price
+    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['day_ahead_price'], 
+                                 name="Marktprijs (€/kWh)", yaxis="y2", line=dict(color='rgba(200, 200, 200, 0.5)')))
+    # Battery SoC
+    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['battery_soc'], 
+                                 name="Batterij SoC (kWh)", fill='tozeroy', line=dict(color='green')))
+    
+    fig.update_layout(
+        title="Batterij Laadtoestand (SoC) vs Marktprijs",
+        xaxis_title="Tijd",
+        yaxis=dict(title="SoC (kWh)", side="left"),
+        yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
+        legend=dict(x=0, y=1.1, orientation="h")
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Data Table
+    with st.expander("Bekijk Ruwe Simulatiedata"):
+        st.dataframe(result.df.head(100))
+elif not uploaded_meter:
+    st.info("👈 Upload je P1-metergegevens in de zijbalk om de berekening te starten.")
