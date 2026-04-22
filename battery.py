@@ -40,6 +40,8 @@ class Battery:
         return actual_energy_removed * self.efficiency_discharging
     
     def get_soc(self) -> float:
+        if self.capacity_kwh <= 0:
+            return 0.0
         return self.soc_kwh/self.capacity_kwh * 100  # return as percentage
     
     def get_soc_kwh(self) -> float:
