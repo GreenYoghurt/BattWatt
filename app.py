@@ -17,42 +17,106 @@ st.set_page_config(page_title="BattWatt - Thuisbatterij Evaluator", layout="wide
 
 # Helper to load images for CSS
 def get_base64_of_bin_file(bin_file):
-    with open(bin_file, 'rb') as f:
-        data = f.read()
-    return base64.b64encode(data).decode()
+    try:
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except:
+        return ""
 
 # Logo theme switching via CSS
-try:
-    logo_dark = get_base64_of_bin_file("assets/tudelft_logo.png")
-    logo_light = get_base64_of_bin_file("assets/tudelft_logo_black.png")
+logo_dark = get_base64_of_bin_file("assets/tudelft_logo.png")
+logo_light = get_base64_of_bin_file("assets/tudelft_logo_black.png")
+
+st.markdown(
+    f"""
+    <style>
+    [data-testid="stSidebarNav"] {{
+        padding-top: 20px;
+    }}
+    .logo-container {{
+        text-align: center;
+        padding: 10px;
+    }}
+    .logo-img {{
+        width: 200px;
+    }}
+    @media (prefers-color-scheme: dark) {{
+        .logo-light {{ display: none; }}
+        .logo-dark {{ display: block; }}
+    }}
+    @media (prefers-color-scheme: light) {{
+        .logo-light {{ display: block; }}
+        .logo-dark {{ display: none; }}
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+def get_duration_conv(df):
+    if len(df) > 1:
+        duration_hours = (df['timestamp'].iloc[1] - df['timestamp'].iloc[0]).total_seconds() / 3600
+        if duration_hours <= 0: duration_hours = 0.25
+    else:
+        duration_hours = 0.25
+    return 1.0 / duration_hours
+
+def create_usage_chart(df, title="Verbruik vs Batterij Status"):
+    conv = get_duration_conv(df)
+    fig = go.Figure()
     
-    st.markdown(
-        f"""
-        <style>
-        [data-testid="stSidebarNav"] {{
-            padding-top: 20px;
-        }}
-        .logo-container {{
-            text-align: center;
-            padding: 10px;
-        }}
-        .logo-img {{
-            width: 200px;
-        }}
-        @media (prefers-color-scheme: dark) {{
-            .logo-light {{ display: none; }}
-            .logo-dark {{ display: block; }}
-        }}
-        @media (prefers-color-scheme: light) {{
-            .logo-light {{ display: block; }}
-            .logo-dark {{ display: none; }}
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True
+    # Battery SoC (%) - Secondary Axis
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=df['battery_soc'], 
+                                 name="Batterij SoC (%)", fill='tozeroy', 
+                                 line=dict(color='rgba(0, 128, 0, 0.2)', width=0),
+                                 yaxis="y2"))
+    
+    # PV (Zon-opbrengst in kW) - Primary Axis
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=df['teruglevering'] * conv, 
+                                 name="Zon-opbrengst (kW)", 
+                                 line=dict(color='orange', width=2)))
+    
+    # Load (Huisverbruik in kW) - Primary Axis
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=df['verbruik'] * conv, 
+                                 name="Huisverbruik (kW)", 
+                                 line=dict(color='red', width=1.5)))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Tijd",
+        yaxis=dict(title="Vermogen (kW)", side="left"),
+        yaxis2=dict(title="Batterij SoC (%)", side="right", overlaying="y", showgrid=False, range=[0, 105]),
+        legend=dict(x=0, y=1.1, orientation="h"),
+        height=400,
+        hovermode="x unified"
     )
-except Exception:
-    pass
+    return fig
+
+def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
+    fig = go.Figure()
+    
+    # Market Price (€/kWh) - Secondary Axis
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=df['day_ahead_price'], 
+                                 name="Marktprijs (€/kWh)", yaxis="y2", 
+                                 line=dict(color='rgba(200, 200, 200, 0.8)', width=2)))
+    
+    # Battery SoC (kWh) - Primary Axis
+    soc_values = df.get('battery_soc_kwh', df['battery_soc']) # Fallback if kwh not calc yet
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=soc_values, 
+                                 name="Batterij SoC (kWh)", fill='tozeroy', 
+                                 line=dict(color='green', width=2)))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Tijd",
+        yaxis=dict(title="SoC (kWh)", side="left"),
+        yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
+        legend=dict(x=0, y=1.1, orientation="h"),
+        height=400,
+        hovermode="x unified"
+    )
+    return fig
 
 # Handle Secrets / API Key
 try:
@@ -71,8 +135,8 @@ st.sidebar.header("1. Configuratie")
 
 # Battery Selection
 st.sidebar.subheader("Batterij")
-battery_options = ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
-selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=1)
+battery_options = ["Geen batterij (Baseline)"] + ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
+selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=2) # Default to Bliq_10kwh
 
 if selected_battery_name == "Handmatig invoeren (Custom)":
     with st.sidebar.expander("Batterij Details", expanded=True):
@@ -89,6 +153,8 @@ if selected_battery_name == "Handmatig invoeren (Custom)":
             efficiency_charging=custom_eff_charge,
             efficiency_discharging=custom_eff_discharge
         )
+elif selected_battery_name == "Geen batterij (Baseline)":
+    battery = Battery(capacity_kwh=0, max_charge_kw=0, max_discharge_kw=0)
 else:
     battery = get_battery(selected_battery_name)
 
@@ -127,7 +193,8 @@ strategy_map = {
 selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_map.keys()))
 
 # Simulation Options
-net_metering = st.sidebar.toggle("Salderingsregeling toepassen", value=provider.net_metering)
+# net_metering = st.sidebar.toggle("Salderingsregeling toepassen", value=provider.net_metering)
+net_metering = False # User request: hide but keep logic. Default to False for battery evaluation.
 provider.net_metering = net_metering
 
 st.sidebar.divider()
@@ -238,6 +305,9 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         result = simulator.run(merged_df, progress_callback=update_progress)
         progress_bar.empty()
         
+        # Store SoC in kWh for better plotting
+        result.df['battery_soc_kwh'] = result.df['battery_soc'] * battery.capacity_kwh / 100
+        
         # 5. Calculate Financials
         st.write("Financiële berekeningen uitvoeren...")
         billing = BillingEngine(provider)
@@ -270,7 +340,7 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
 
 # Credits & Logo
 st.sidebar.markdown("---")
-try:
+if logo_dark and logo_light:
     st.sidebar.markdown(
         f"""
         <div class="logo-container">
@@ -280,7 +350,7 @@ try:
         """,
         unsafe_allow_html=True
     )
-except Exception:
+else:
     st.sidebar.image("assets/tudelft_logo.png", width=250)
 
 st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)\n[Brecht Goethals](https://github.com/Brecht1949)")
@@ -316,23 +386,59 @@ if 'simulation_result' in st.session_state:
     # Charts
     st.subheader("Interactieve Energieflow")
     
-    fig = go.Figure()
-    # Market Price
-    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['day_ahead_price'], 
-                                 name="Marktprijs (€/kWh)", yaxis="y2", line=dict(color='rgba(200, 200, 200, 0.5)')))
-    # Battery SoC
-    fig.add_trace(go.Scatter(x=result.df['timestamp'], y=result.df['battery_soc'], 
-                                 name="Batterij SoC (kWh)", fill='tozeroy', line=dict(color='green')))
+    duration = result.df['timestamp'].max() - result.df['timestamp'].min()
     
-    fig.update_layout(
-        title="Batterij Laadtoestand (SoC) vs Marktprijs",
-        xaxis_title="Tijd",
-        yaxis=dict(title="SoC (kWh)", side="left"),
-        yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
-        legend=dict(x=0, y=1.1, orientation="h")
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    if duration > pd.Timedelta(days=32):
+        # Long simulation: show representative weeks
+        st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
+        
+        # Target months for Winter, Spring, Summer, Autumn
+        seasons = {
+            "❄️ Winter (Jan)": 1,
+            "🌱 Lente (Apr)": 4,
+            "☀️ Zomer (Jul)": 7,
+            "🍂 Herfst (Okt)": 10
+        }
+        
+        # Find available seasons in data
+        available_seasons = {}
+        for name, month in seasons.items():
+            mask = result.df['timestamp'].dt.month == month
+            if mask.any():
+                # Take a 7-day slice starting from the first day of that month in the data
+                start_time = result.df[mask]['timestamp'].min()
+                end_time = start_time + pd.Timedelta(days=7)
+                available_seasons[name] = result.df[(result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)]
+        
+        # Always add the full period tab
+        tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
+        if not available_seasons:
+            tab_names += ["Begin van periode", "Einde van periode"]
+
+        tabs = st.tabs(tab_names)
+        
+        # Process each tab
+        for i, t_name in enumerate(tab_names):
+            with tabs[i]:
+                # Determine which data slice to use
+                if i == 0:
+                    plot_df = result.df
+                    slice_title = "Volledige Periode"
+                else:
+                    s_name = list(available_seasons.keys())[i-1] if available_seasons else (["Begin van periode", "Einde van periode"][i-1])
+                    if available_seasons:
+                        plot_df = available_seasons[s_name]
+                    else:
+                        plot_df = result.df.head(7*24*4) if i==1 else result.df.tail(7*24*4)
+                    slice_title = s_name
+
+                # Split into two charts
+                st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True)
+                st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True)
+    else:
+        # Short simulation: show everything in one tab (two plots)
+        st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True)
+        st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True)
 
     # Data Table
     with st.expander("Bekijk Ruwe Simulatiedata"):
