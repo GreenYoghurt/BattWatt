@@ -66,9 +66,11 @@ def test_battwatt_e2e_simulation():
     # Financial Regression (Hardcoded based on net_metering=False)
     expected_baseline_cost = 443.30
     expected_simulated_cost = 412.57
+    expected_cycles = 354.40
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
+    assert abs(result.total_cycles - expected_cycles) < 0.05
 
     # 5. REGRESSION CHECK (CSV)
     baseline_path = Path("tests/simulation_baseline.csv")

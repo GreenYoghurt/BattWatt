@@ -14,3 +14,4 @@ class SimulationResult:
     final_soc_pct: float
     final_soc_kwh: float
     delta_soc_kwh: float
+    total_cycles: float = 0.0

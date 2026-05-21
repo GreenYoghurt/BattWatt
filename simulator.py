@@ -77,6 +77,7 @@ class Simulator:
             
         # Final totals
         final_soc_kwh = self.battery.get_soc_kwh()
+        total_cycles = self.battery.total_discharged_kwh / self.battery.capacity_kwh if self.battery.capacity_kwh > 0 else 0
         
         return SimulationResult(
             df=result_df,
@@ -86,5 +87,6 @@ class Simulator:
             total_adjusted_consumption_kwh=result_df['adjusted_consumption'].sum(),
             final_soc_pct=self.battery.get_soc(),
             final_soc_kwh=final_soc_kwh,
-            delta_soc_kwh=final_soc_kwh - initial_soc_kwh
+            delta_soc_kwh=final_soc_kwh - initial_soc_kwh,
+            total_cycles=total_cycles
         )

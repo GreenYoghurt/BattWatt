@@ -367,16 +367,21 @@ if 'simulation_result' in st.session_state:
     
     # Check if we need a 4th column for realistic MPC savings
     if strategy == "MPC":
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         realistic_savings = savings * 0.8
+        
+        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
+        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
+        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
         col4.metric("Realistische Besparing (80%)", f"€{realistic_savings:.2f}", 
                    help="In de werkelijkheid kan een algoritme nooit een perfecte voorspelling doen van het energieverbruik en de zonne-opbrengst. Deze waarde geeft een realistischer beeld van de te verwachten besparing.")
+        col5.metric("Batterij Cycli 🔄", f"{result.total_cycles:.1f}")
     else:
-        col1, col2, col3 = st.columns(3)
-
-    col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
-    col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
-    col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
+        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
+        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+        col4.metric("Batterij Cycli 🔄", f"{result.total_cycles:.1f}")
 
     st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
 
