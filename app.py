@@ -6,7 +6,7 @@ from pathlib import Path
 from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data
 from energy_providers import get_providers, Provider
 from battery import get_battery, Battery
-from controllers import Controller_PV, Controller_price, Controller_MPC
+from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
@@ -187,7 +187,6 @@ else:
 st.sidebar.subheader("Aansturing")
 strategy_map = {
     "PV Prioriteit (Zelfconsumptie)": "PV",
-    "Prijs Arbitrage (Regelgebaseerd)": "Price",
     "Kosten Optimaal (MPC)": "MPC"
 }
 selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_map.keys()))
@@ -290,8 +289,6 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         # 4. Setup Controller & Run Simulation
         if strategy_map[selected_strategy] == "PV":
             controller = Controller_PV(battery)
-        elif strategy_map[selected_strategy] == "Price":
-            controller = Controller_price(battery, merged_df)
         else: # MPC
             controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
             
@@ -353,7 +350,7 @@ if logo_dark and logo_light:
 else:
     st.sidebar.image("assets/tudelft_logo.png", width=250)
 
-st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://github.com/JortGroen)\n[Brecht Goethals](https://github.com/Brecht1949)")
+st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://www.linkedin.com/in/jortgroen/)\n[Brecht Goethals](https://github.com/Brecht1949)")
 st.sidebar.caption("Technische Universiteit Delft")
 
 # Main Area Display
