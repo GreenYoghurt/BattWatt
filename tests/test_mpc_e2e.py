@@ -70,9 +70,11 @@ def test_mpc_e2e_simulation():
     # Financial Regression (Hardcoded based on Zonneplan with Bliq_10kwh_fast)
     expected_cost_no_battery = 443.28
     expected_cost_with_mpc = 96.78
+    expected_mpc_cycles = 207.15
     
     assert abs(cost_no_battery - expected_cost_no_battery) < 0.05
     assert abs(cost_with_mpc - expected_cost_with_mpc) < 0.05
+    assert abs(result.total_cycles - expected_mpc_cycles) < 0.05
 
     # We will use the regression CSV check as well
     baseline_path = Path("tests/mpc_simulation_baseline.csv")
