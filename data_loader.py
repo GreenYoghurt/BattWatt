@@ -59,7 +59,7 @@ def load_price_data(path: Union[str, Path, Any]) -> pd.DataFrame:
 
 class MeterDataLoader(ABC):
     """Base class for meter data loaders."""
-    
+
     @abstractmethod
     def can_handle(self, path: Any) -> bool:
         """Check if this loader can handle the given file."""
@@ -69,6 +69,11 @@ class MeterDataLoader(ABC):
     def load(self, path: Any) -> pd.DataFrame:
         """Load and process the data."""
         pass
+
+    def get_raw_df(self, path: Any) -> Optional[pd.DataFrame]:
+        """Return the intermediate DataFrame before column stripping, for data quality checks.
+        Override in loaders that carry extra columns (e.g. L1/L2/L3 power)."""
+        return None
 
     def _get_name(self, path: Any) -> str:
         if isinstance(path, (str, Path)):
@@ -115,26 +120,24 @@ class MeterDataLoader(ABC):
 
 class HomeWizardLoader(MeterDataLoader):
     """Loader for HomeWizard CSV exports."""
-    
+
     def can_handle(self, path: Any) -> bool:
         name = self._get_name(path)
         if not name.lower().endswith(".csv"):
             return False
         try:
-            # Reset buffer if it's a file-like object
             if hasattr(path, 'seek'): path.seek(0)
             df_head = pd.read_csv(path, nrows=1)
-            # Standard HomeWizard headers
             return "Import T1 kWh" in df_head.columns or "time" in df_head.columns
         except:
             return False
 
-    def load(self, path: Any) -> pd.DataFrame:
+    def _read_raw(self, path: Any) -> pd.DataFrame:
+        """Read the CSV and compute interval columns, keeping all original columns intact."""
         if hasattr(path, 'seek'): path.seek(0)
         df = pd.read_csv(path)
         df["timestamp"] = pd.to_datetime(df["time"], errors="coerce")
-        
-        # Cumulative to interval
+
         t1_imp = df.get("Import T1 kWh", 0)
         t2_imp = df.get("Import T2 kWh", 0)
         t1_exp = df.get("Export T1 kWh", 0)
@@ -142,11 +145,17 @@ class HomeWizardLoader(MeterDataLoader):
 
         total_import = t1_imp + t2_imp
         total_export = t1_exp + t2_exp
-        
+
         df["verbruik"] = total_import.diff().fillna(0)
         df["teruglevering"] = total_export.diff().fillna(0)
-        
-        return self.validate(df)
+
+        return df
+
+    def load(self, path: Any) -> pd.DataFrame:
+        return self.validate(self._read_raw(path))
+
+    def get_raw_df(self, path: Any) -> pd.DataFrame:
+        return self._read_raw(path)
 
 class StandardExcelLoader(MeterDataLoader):
     """Loader for the 'standard' Excel format (e.g. from some DSOs)."""
@@ -246,7 +255,7 @@ class GenericMappedLoader(MeterDataLoader):
 
 class SmartLoader:
     """Main entry point for loading meter data with auto-detection."""
-    
+
     _loaders: List[Type[MeterDataLoader]] = [HomeWizardLoader, StandardExcelLoader]
 
     @classmethod
@@ -258,13 +267,13 @@ class SmartLoader:
                 with open(config_path, 'r') as f:
                     config = json.load(f)
             return GenericMappedLoader(config).load(path)
-        
+
         # 2. Try predefined loaders
         for loader_cls in cls._loaders:
             loader = loader_cls()
             if loader.can_handle(path):
                 return loader.load(path)
-        
+
         # 3. Last resort: Try to read headers and provide a helpful error
         name = getattr(path, 'name', str(path))
         try:
@@ -273,7 +282,7 @@ class SmartLoader:
                 headers = pd.read_csv(path, nrows=0).columns.tolist()
             else:
                 headers = pd.read_excel(path, nrows=0).columns.tolist()
-            
+
             raise ValueError(
                 f"Could not automatically detect the format of '{name}'.\n"
                 f"Available headers: {headers}\n"
@@ -282,6 +291,40 @@ class SmartLoader:
         except Exception as e:
             if isinstance(e, ValueError): raise e
             raise ValueError(f"Could not read or detect format for file: {name}. Error: {e}")
+
+    @classmethod
+    def load_with_checks(
+        cls,
+        path: Any,
+        config: Optional[Union[Dict[str, Any], str, Path]] = None,
+    ) -> "tuple[pd.DataFrame, list]":
+        """Load meter data and run data quality checks.
+
+        Returns (validated_df, check_results). check_results is empty when no
+        checks are applicable (e.g. custom-mapped formats without phase columns).
+        """
+        from data_checks import run_checks
+
+        if config:
+            if isinstance(config, (str, Path)):
+                with open(config, 'r') as f:
+                    config = json.load(f)
+            return GenericMappedLoader(config).load(path), []
+
+        for loader_cls in cls._loaders:
+            loader = loader_cls()
+            if loader.can_handle(path):
+                raw_df = loader.get_raw_df(path)
+                if raw_df is not None:
+                    validated_df = loader.validate(raw_df)
+                    checks = run_checks(raw_df)
+                else:
+                    validated_df = loader.load(path)
+                    checks = []
+                return validated_df, checks
+
+        # Fall through to the standard error path
+        return cls.load(path), []
 
 # --- Backward Compatibility Wrappers ---
 

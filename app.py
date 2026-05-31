@@ -255,16 +255,9 @@ if uploaded_meter:
     elif price_source == "Handmatig uploaden (.xlsx)" and not uploaded_price:
         can_simulate = False
 
-if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
+def _run_simulation(meter_df):
+    """Load prices, run simulation, store results in session_state."""
     with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-        # 1. Load Meter Data
-        st.write("Meterdata inlezen...")
-        try:
-            meter_df = SmartLoader.load(uploaded_meter, config=custom_mapping)
-        except Exception as e:
-            st.error(f"Fout bij inlezen meterdata: {e}")
-            st.stop()
-        
         # 2. Get Price Data
         if price_source == "Automatisch (ENTSO-E API)":
             start_date = meter_df['timestamp'].min()
@@ -278,37 +271,35 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         else:
             st.write("Marktprijzen inlezen uit bestand...")
             price_df = load_price_data(uploaded_price)
-        
+
         # 3. Merge Data
         st.write("Data samenvoegen...")
         merged_df = merge_data(meter_df, price_df)
-        merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
+        merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000
         merged_df.set_index("timestamp", drop=False, inplace=True)
-        
+
         st.write(f"Uitvoeren van {selected_strategy} simulatie...")
         # 4. Setup Controller & Run Simulation
         if strategy_map[selected_strategy] == "PV":
             controller = Controller_PV(battery)
-        else: # MPC
+        else:  # MPC
             controller = Controller_MPC(battery, merged_df, provider, horizon_hours=24.0, reoptimize_every_hours=12.0)
-            
+
         simulator = Simulator(battery, controller)
-        
-        # Progress bar for the simulation
+
         progress_bar = st.progress(0, text="Simulatie voortgang")
         def update_progress(current, total):
             progress_bar.progress(current / total, text=f"Simulatie voortgang: {current}/{total} stappen")
-        
+
         result = simulator.run(merged_df, progress_callback=update_progress)
         progress_bar.empty()
-        
-        # Store SoC in kWh for better plotting
+
         result.df['battery_soc_kwh'] = result.df['battery_soc'] * battery.capacity_kwh / 100
-        
+
         # 5. Calculate Financials
         st.write("Financiële berekeningen uitvoeren...")
         billing = BillingEngine(provider)
-        
+
         baseline_result = SimulationResult(
             df=merged_df,
             total_production_kwh=merged_df['teruglevering'].sum(),
@@ -319,14 +310,12 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
             final_soc_kwh=0,
             delta_soc_kwh=0
         )
-        
+
         cost_baseline = billing.calculate_bill(baseline_result)
         cost_simulated = billing.calculate_bill(result)
         savings = cost_baseline - cost_simulated
-        
-        status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
 
-        # Store in session state for persistence between re-runs
+        status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
         st.session_state['simulation_result'] = {
             'result': result,
             'cost_baseline': cost_baseline,
@@ -334,6 +323,26 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
             'savings': savings,
             'strategy': strategy_map[selected_strategy]
         }
+
+
+if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
+    # 1. Load Meter Data & run quality checks
+    try:
+        meter_df, data_checks = SmartLoader.load_with_checks(uploaded_meter, config=custom_mapping)
+    except Exception as e:
+        st.error(f"Fout bij inlezen meterdata: {e}")
+        st.stop()
+
+    failed_checks = [c for c in data_checks if not c.passed]
+    if failed_checks:
+        st.session_state['pending_simulation'] = {
+            'meter_df': meter_df,
+            'failed_checks': failed_checks,
+        }
+        st.session_state.pop('simulation_result', None)
+    else:
+        st.session_state.pop('pending_simulation', None)
+        _run_simulation(meter_df)
 
 # Credits & Logo
 st.sidebar.markdown("---")
@@ -354,7 +363,18 @@ st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://www.linkedin.c
 st.sidebar.caption("Technische Universiteit Delft")
 
 # Main Area Display
-if 'simulation_result' in st.session_state:
+if 'pending_simulation' in st.session_state:
+    pending = st.session_state['pending_simulation']
+    for check in pending['failed_checks']:
+        st.warning(f"**{check.title}**\n\n{check.message}")
+    st.divider()
+    if st.button("▶ Analyse alsnog uitvoeren", type="primary"):
+        meter_df = st.session_state['pending_simulation']['meter_df']
+        del st.session_state['pending_simulation']
+        _run_simulation(meter_df)
+        st.rerun()
+
+elif 'simulation_result' in st.session_state:
     res_data = st.session_state['simulation_result']
     result = res_data['result']
     cost_baseline = res_data['cost_baseline']
