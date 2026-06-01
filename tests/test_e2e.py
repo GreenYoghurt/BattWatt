@@ -40,13 +40,18 @@ def test_battwatt_e2e_simulation():
     
     billing = BillingEngine(provider)
     
-    # Create baseline result
+    # Baseline: net per-interval flows so billing uses the same logic as simulated result
+    baseline_df = merged_df.copy()
+    net = baseline_df['teruglevering'] - baseline_df['verbruik']
+    baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
+    baseline_df['adjusted_production'] = net.clip(lower=0)
+
     baseline_result = SimulationResult(
-        df=merged_df,
+        df=baseline_df,
         total_production_kwh=merged_df['teruglevering'].sum(),
         total_consumption_kwh=merged_df['verbruik'].sum(),
-        total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-        total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+        total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
+        total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
         final_soc_pct=0,
         final_soc_kwh=0,
         delta_soc_kwh=0
@@ -64,8 +69,10 @@ def test_battwatt_e2e_simulation():
            result.delta_soc_kwh >= -1e-6
 
     # Financial Regression (Hardcoded based on net_metering=False)
-    expected_baseline_cost = 443.30
-    expected_simulated_cost = 412.57
+    # Baseline uses per-interval netted flows (not raw verbruik/teruglevering) so
+    # savings reflect only the battery contribution. Was 443.30 before the fix.
+    expected_baseline_cost = 430.73
+    expected_simulated_cost = 412.55
     expected_cycles = 354.40
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05

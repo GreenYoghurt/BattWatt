@@ -51,13 +51,18 @@ def test_mpc_e2e_simulation():
     # 5. FINANCIALS (To compare against baseline)
     billing = BillingEngine(provider)
     
-    # Create baseline result (No battery)
+    # Baseline: net per-interval flows so billing uses the same logic as simulated result
+    baseline_df = merged_df.copy()
+    net = baseline_df['teruglevering'] - baseline_df['verbruik']
+    baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
+    baseline_df['adjusted_production'] = net.clip(lower=0)
+
     baseline_result = SimulationResult(
-        df=merged_df,
+        df=baseline_df,
         total_production_kwh=merged_df['teruglevering'].sum(),
         total_consumption_kwh=merged_df['verbruik'].sum(),
-        total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-        total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+        total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
+        total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
         final_soc_pct=0,
         final_soc_kwh=0,
         delta_soc_kwh=0
@@ -68,7 +73,8 @@ def test_mpc_e2e_simulation():
     savings = cost_no_battery - cost_with_mpc
 
     # Financial Regression (Hardcoded based on Zonneplan with Bliq_10kwh_fast)
-    expected_cost_no_battery = 443.28
+    # Baseline uses per-interval netted flows. Was 443.28 before the fix.
+    expected_cost_no_battery = 430.73
     expected_cost_with_mpc = 96.78
     expected_mpc_cycles = 207.15
     

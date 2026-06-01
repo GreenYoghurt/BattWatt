@@ -300,12 +300,22 @@ def _run_simulation(meter_df):
         st.write("Financiële berekeningen uitvoeren...")
         billing = BillingEngine(provider)
 
+        # Baseline: net verbruik and teruglevering per interval so billing uses the
+        # same netting logic as the simulated result. Without this, intervals where
+        # both import and export are non-zero (possible in real meter data due to
+        # phase imbalance or tariff transitions) would generate phantom savings
+        # unrelated to the battery.
+        baseline_df = merged_df.copy()
+        net = baseline_df['teruglevering'] - baseline_df['verbruik']
+        baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
+        baseline_df['adjusted_production'] = net.clip(lower=0)
+
         baseline_result = SimulationResult(
-            df=merged_df,
+            df=baseline_df,
             total_production_kwh=merged_df['teruglevering'].sum(),
             total_consumption_kwh=merged_df['verbruik'].sum(),
-            total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-            total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+            total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
+            total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
             final_soc_pct=0,
             final_soc_kwh=0,
             delta_soc_kwh=0
