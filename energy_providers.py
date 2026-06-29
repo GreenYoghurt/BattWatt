@@ -68,62 +68,62 @@ class Provider:
         return total_fixed_cost
 
 
-    def calculate_flexible_costs(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat) -> float:
-
-        # Totale kWh over de periode
+    def calculate_flexible_costs_breakdown(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat) -> dict:
         total_consumption = float(sum(consumption_kwh))
         total_feed_in = float(sum(feed_in_kwh))
 
-        # VARIABELE KOSTEN (STROOM ENERGIEREEKS)
-        # We splitsen inkoop-energie en inkoop-belasting als net_metering aan staat.
         if self.net_metering:
-            # Energieprijs per interval (Marktwaarde)
-            stroom_inkoop_energie = (1+VAT_RATE) * sum(
+            marktprijs_inkoop = (1 + VAT_RATE) * sum(
                 c * p for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
             )
-            
-            # Belasting over het NETTO verbruik (Saldering)
             net_consumption = max(0.0, total_consumption - total_feed_in)
-            stroom_inkoop_belasting = (1+VAT_RATE) * net_consumption * get_energy_tax_excl_vat()
-            
-            stroom_inkoop = stroom_inkoop_energie + stroom_inkoop_belasting
+            energiebelasting = (1 + VAT_RATE) * net_consumption * get_energy_tax_excl_vat()
+            energiebelasting_kwh = net_consumption
         else:
-            # Alles per interval (geen saldering)
-            stroom_inkoop = (1+VAT_RATE) * sum(
-                c * (p+get_energy_tax_excl_vat()) for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
+            marktprijs_inkoop = (1 + VAT_RATE) * sum(
+                c * p for c, p in zip(consumption_kwh, prices_eur_per_kwh_excl_vat)
             )
+            energiebelasting = (1 + VAT_RATE) * total_consumption * get_energy_tax_excl_vat()
+            energiebelasting_kwh = total_consumption
 
-        kosten_stroom_inkoop = total_consumption * self.buying_fee
-        kosten_stroom_verkoop = total_feed_in * self.selling_fee
+        leveranciersopslag_inkoop = total_consumption * self.buying_fee
+        leveranciersopslag_verkoop = total_feed_in * self.selling_fee
 
-
-        # INKOMSTEN (TERUGLEVERING)
-        # Terugleververgoeding (Marktwaarde)
-        feed_in_revenue_incl = (1+VAT_RATE) * sum(
+        teruglevering_opbrengst = (1 + VAT_RATE) * sum(
             f * p for f, p in zip(feed_in_kwh, prices_eur_per_kwh_excl_vat)
         )
-        
-        # Als we salderen, is de belasting-besparing al verwerkt in stroom_inkoop_belasting.
-        # Wat overblijft is de kale marktwaarde van de teruglevering.
-        stroom_terugleveren_niet_te_salderen = feed_in_revenue_incl
 
-
-        total_cost = (
-            stroom_inkoop
-            + kosten_stroom_inkoop
-            + kosten_stroom_verkoop
-            - stroom_terugleveren_niet_te_salderen
+        total_flexible = (
+            marktprijs_inkoop
+            + energiebelasting
+            + leveranciersopslag_inkoop
+            + leveranciersopslag_verkoop
+            - teruglevering_opbrengst
         )
 
+        return {
+            "marktprijs_inkoop": marktprijs_inkoop,
+            "energiebelasting": energiebelasting,
+            "leveranciersopslag_inkoop": leveranciersopslag_inkoop,
+            "leveranciersopslag_verkoop": leveranciersopslag_verkoop,
+            "teruglevering_opbrengst": teruglevering_opbrengst,
+            "total_flexible": total_flexible,
+            "total_consumption_kwh": total_consumption,
+            "total_feed_in_kwh": total_feed_in,
+            "energiebelasting_kwh": energiebelasting_kwh,
+        }
 
-        print(f"total_consumption: {total_consumption} kWh")
-        print(f"total_feed_in: {total_feed_in} kWh")
-        print(f"stroom_inkoop: {stroom_inkoop}")
-        print(f"kosten_stroom_inkoop: {kosten_stroom_inkoop}")
-        print(f"stroom_terugleveren_niet_te_salderen: {stroom_terugleveren_niet_te_salderen}")
-        
-        print(f"total flexible cost {total_cost}")
-        return total_cost
+    def calculate_flexible_costs(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat) -> float:
+        bd = self.calculate_flexible_costs_breakdown(consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat)
+
+        print(f"total_consumption: {bd['total_consumption_kwh']} kWh")
+        print(f"total_feed_in: {bd['total_feed_in_kwh']} kWh")
+        print(f"stroom_inkoop: {bd['marktprijs_inkoop'] + bd['energiebelasting']}")
+        print(f"kosten_stroom_inkoop: {bd['leveranciersopslag_inkoop']}")
+        print(f"stroom_terugleveren_niet_te_salderen: {bd['teruglevering_opbrengst']}")
+        print(f"total flexible cost {bd['total_flexible']}")
+
+        return bd["total_flexible"]
 
         
 
