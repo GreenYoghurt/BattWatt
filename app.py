@@ -325,13 +325,18 @@ def _run_simulation(meter_df):
         cost_simulated = billing.calculate_bill(result)
         savings = cost_baseline - cost_simulated
 
+        breakdown_baseline = billing.calculate_bill_breakdown(baseline_result)
+        breakdown_simulated = billing.calculate_bill_breakdown(result)
+
         status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
         st.session_state['simulation_result'] = {
             'result': result,
             'cost_baseline': cost_baseline,
             'cost_simulated': cost_simulated,
             'savings': savings,
-            'strategy': strategy_map[selected_strategy]
+            'strategy': strategy_map[selected_strategy],
+            'breakdown_baseline': breakdown_baseline,
+            'breakdown_simulated': breakdown_simulated,
         }
 
 
@@ -394,83 +399,171 @@ elif 'simulation_result' in st.session_state:
 
     # Display Results
     st.header("Resultaten Overzicht")
-    
+    include_fixed = st.checkbox("Vaste kosten meenemen", value=True,
+                                help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken.")
+
+    breakdown_baseline = res_data.get('breakdown_baseline')
+    breakdown_simulated = res_data.get('breakdown_simulated')
+
+    if not include_fixed and breakdown_baseline and breakdown_simulated:
+        fixed_base = breakdown_baseline['abonnementskosten'] + breakdown_baseline['netbeheerskosten'] - breakdown_baseline['belastingvermindering']
+        fixed_sim  = breakdown_simulated['abonnementskosten'] + breakdown_simulated['netbeheerskosten'] - breakdown_simulated['belastingvermindering']
+        display_baseline = cost_baseline - fixed_base
+        display_simulated = cost_simulated - fixed_sim
+    else:
+        display_baseline = cost_baseline
+        display_simulated = cost_simulated
+    display_savings = display_baseline - display_simulated
+
     # Check if we need a 4th column for realistic MPC savings
     if strategy == "MPC":
         col1, col2, col3, col4, col5 = st.columns(5)
-        realistic_savings = savings * 0.8
-        
-        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
-        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
-        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
-        col4.metric("Realistische Besparing (80%)", f"€{realistic_savings:.2f}", 
+        realistic_savings = display_savings * 0.8
+
+        col1.metric("Jaarnota (Zonder Batterij)", f"€{display_baseline:.2f}")
+        col2.metric("Jaarnota (Met Batterij)", f"€{display_simulated:.2f}")
+        col3.metric("Geschatte Besparing", f"€{display_savings:.2f}", delta=f"{display_savings:.2f}")
+        col4.metric("Realistische Besparing (80%)", f"€{realistic_savings:.2f}",
                    help="In de werkelijkheid kan een algoritme nooit een perfecte voorspelling doen van het energieverbruik en de zonne-opbrengst. Deze waarde geeft een realistischer beeld van de te verwachten besparing.")
         col5.metric("Batterij Cycli 🔄", f"{getattr(result, 'total_cycles', 0.0):.1f}")
     else:
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Jaarnota (Zonder Batterij)", f"€{cost_baseline:.2f}")
-        col2.metric("Jaarnota (Met Batterij)", f"€{cost_simulated:.2f}")
-        col3.metric("Geschatte Besparing", f"€{savings:.2f}", delta=f"{savings:.2f}")
+        col1.metric("Jaarnota (Zonder Batterij)", f"€{display_baseline:.2f}")
+        col2.metric("Jaarnota (Met Batterij)", f"€{display_simulated:.2f}")
+        col3.metric("Geschatte Besparing", f"€{display_savings:.2f}", delta=f"{display_savings:.2f}")
         col4.metric("Batterij Cycli 🔄", f"{getattr(result, 'total_cycles', 0.0):.1f}")
 
     st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
 
-    # Charts
-    st.subheader("Interactieve Energieflow")
-    
-    duration = result.df['timestamp'].max() - result.df['timestamp'].min()
-    
-    if duration > pd.Timedelta(days=32):
-        # Long simulation: show representative weeks
-        st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
-        
-        # Target months for Winter, Spring, Summer, Autumn
-        seasons = {
-            "❄️ Winter (Jan)": 1,
-            "🌱 Lente (Apr)": 4,
-            "☀️ Zomer (Jul)": 7,
-            "🍂 Herfst (Okt)": 10
-        }
-        
-        # Find available seasons in data
-        available_seasons = {}
-        for name, month in seasons.items():
-            mask = result.df['timestamp'].dt.month == month
-            if mask.any():
-                # Take a 7-day slice starting from the first day of that month in the data
-                start_time = result.df[mask]['timestamp'].min()
-                end_time = start_time + pd.Timedelta(days=7)
-                available_seasons[name] = result.df[(result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)]
-        
-        # Always add the full period tab
-        tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
-        if not available_seasons:
-            tab_names += ["Begin van periode", "Einde van periode"]
+    # Cost breakdown table
+    if breakdown_baseline and breakdown_simulated:
+        with st.expander("Kostenopbouw", expanded=True):
+            bd = breakdown_baseline  # rates are provider-level, same for both
 
-        tabs = st.tabs(tab_names)
-        
-        # Process each tab
-        for i, t_name in enumerate(tab_names):
-            with tabs[i]:
-                # Determine which data slice to use
-                if i == 0:
-                    plot_df = result.df
-                    slice_title = "Volledige Periode"
+            def avg_per_kwh(cost_key, vol_key):
+                vol = bd[vol_key]
+                return bd[cost_key] / vol if vol else 0.0
+
+            # (label, cost_key, is_credit, volume_key, is_fixed, tarief_str)
+            all_rows = [
+                ("Abonnementskosten",               "abonnementskosten",         False, None,                    True,
+                 f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
+                ("Netbeheerskosten",                 "netbeheerskosten",           False, None,                    True,
+                 f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
+                ("Belastingvermindering",            "belastingvermindering",      True,  None,                    True,
+                 f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
+                ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
+                 f"gem. € {avg_per_kwh('marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
+                ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
+                 f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
+                ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
+                 f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
+                ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
+                 f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
+                ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
+                 f"gem. € {avg_per_kwh('teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
+            ]
+            rows = [r for r in all_rows if include_fixed or not r[4]]
+
+            col_label, col_base, col_sim, col_diff = st.columns([3, 2, 2, 2])
+            col_label.markdown("**Post**")
+            col_base.markdown("**Zonder batterij**")
+            col_sim.markdown("**Met batterij**")
+            col_diff.markdown("**Verschil**")
+
+            st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+
+            def fmt_cell(amount, volume_kwh):
+                sign = "−" if amount < 0 else ""
+                vol_html = f" <small style='color:grey'>({volume_kwh:,.0f} kWh)</small>" if volume_kwh is not None else ""
+                return f"{sign}€ {abs(amount):,.2f}{vol_html}"
+
+            prev_fixed = None
+            for label, key, is_credit, vol_key, is_fixed, tarief_str in rows:
+                # Section header when switching between fixed and variable
+                if include_fixed and prev_fixed is not None and prev_fixed != is_fixed:
+                    st.markdown("<div style='margin:6px 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Variabele kosten</div>", unsafe_allow_html=True)
+                elif include_fixed and prev_fixed is None:
+                    st.markdown("<div style='margin:0 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Vaste kosten</div>", unsafe_allow_html=True)
+                prev_fixed = is_fixed
+
+                raw_base = breakdown_baseline[key]
+                raw_sim = breakdown_simulated[key]
+                base_contribution = -raw_base if is_credit else raw_base
+                sim_contribution = -raw_sim if is_credit else raw_sim
+                diff = base_contribution - sim_contribution
+
+                base_vol = breakdown_baseline[vol_key] if vol_key else None
+                sim_vol = breakdown_simulated[vol_key] if vol_key else None
+
+                col_label, col_base, col_sim, col_diff = st.columns([3, 2, 2, 2])
+                col_label.markdown(
+                    f"{label} <small style='color:grey'>({tarief_str})</small>",
+                    unsafe_allow_html=True
+                )
+                col_base.markdown(fmt_cell(base_contribution, base_vol), unsafe_allow_html=True)
+                col_sim.markdown(fmt_cell(sim_contribution, sim_vol), unsafe_allow_html=True)
+                if abs(diff) < 0.005:
+                    col_diff.write("—")
+                elif diff > 0:
+                    col_diff.markdown(f"<span style='color:green'>▼ € {diff:,.2f}</span>", unsafe_allow_html=True)
                 else:
-                    s_name = list(available_seasons.keys())[i-1] if available_seasons else (["Begin van periode", "Einde van periode"][i-1])
-                    if available_seasons:
-                        plot_df = available_seasons[s_name]
-                    else:
-                        plot_df = result.df.head(7*24*4) if i==1 else result.df.tail(7*24*4)
-                    slice_title = s_name
+                    col_diff.markdown(f"<span style='color:red'>▲ € {abs(diff):,.2f}</span>", unsafe_allow_html=True)
 
-                # Split into two charts
-                st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True)
-                st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True)
-    else:
-        # Short simulation: show everything in one tab (two plots)
-        st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True)
-        st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True)
+            st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+            col_label, col_base, col_sim, col_diff = st.columns([3, 2, 2, 2])
+            total_diff = display_baseline - display_simulated
+            col_label.markdown("**Totaal**")
+            col_base.markdown(f"**€ {display_baseline:,.2f}**")
+            col_sim.markdown(f"**€ {display_simulated:,.2f}**")
+            if total_diff > 0:
+                col_diff.markdown(f"<span style='color:green'>**▼ € {total_diff:,.2f}**</span>", unsafe_allow_html=True)
+            else:
+                col_diff.markdown(f"<span style='color:red'>**▲ € {abs(total_diff):,.2f}**</span>", unsafe_allow_html=True)
+
+    # Charts
+    with st.expander("Interactieve Energieflow", expanded=True):
+        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
+
+        if duration > pd.Timedelta(days=32):
+            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
+
+            seasons = {
+                "❄️ Winter (Jan)": 1,
+                "🌱 Lente (Apr)": 4,
+                "☀️ Zomer (Jul)": 7,
+                "🍂 Herfst (Okt)": 10
+            }
+
+            available_seasons = {}
+            for name, month in seasons.items():
+                mask = result.df['timestamp'].dt.month == month
+                if mask.any():
+                    start_time = result.df[mask]['timestamp'].min()
+                    end_time = start_time + pd.Timedelta(days=7)
+                    available_seasons[name] = result.df[(result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)]
+
+            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
+            if not available_seasons:
+                tab_names += ["Begin van periode", "Einde van periode"]
+
+            tabs = st.tabs(tab_names)
+
+            for i, t_name in enumerate(tab_names):
+                with tabs[i]:
+                    if i == 0:
+                        plot_df = result.df
+                        slice_title = "Volledige Periode"
+                    else:
+                        s_name = list(available_seasons.keys())[i-1] if available_seasons else (["Begin van periode", "Einde van periode"][i-1])
+                        plot_df = available_seasons[s_name] if available_seasons else (result.df.head(7*24*4) if i==1 else result.df.tail(7*24*4))
+                        slice_title = s_name
+
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True)
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True)
+        else:
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True)
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True)
 
     # Data Table
     with st.expander("Bekijk Ruwe Simulatiedata"):
