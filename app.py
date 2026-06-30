@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data
-from energy_providers import get_providers, Provider
+from energy_providers import Provider
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
@@ -131,83 +131,11 @@ Upload je P1-metergegevens om te beginnen.
 """)
 
 # Sidebar: Configuration
-st.sidebar.header("1. Configuratie")
-
-# Battery Selection
-st.sidebar.subheader("Batterij")
-battery_options = ["Geen batterij (Baseline)"] + ["Bliq_5kwh", "Bliq_10kwh", "Bliq_10kwh_fast", "Bliq_15kwh"] + ["Handmatig invoeren (Custom)"]
-selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=2) # Default to Bliq_10kwh
-
-if selected_battery_name == "Handmatig invoeren (Custom)":
-    with st.sidebar.expander("Batterij Details", expanded=True):
-        custom_cap = st.number_input("Capaciteit (kWh)", value=10.0, step=0.5)
-        custom_charge = st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1)
-        custom_discharge = st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1)
-        custom_eff_charge = st.slider("Laadefficiëntie (%)", 80, 100, 98) / 100
-        custom_eff_discharge = st.slider("Ontlaadefficiëntie (%)", 80, 100, 98) / 100
-        
-        battery = Battery(
-            capacity_kwh=custom_cap,
-            max_charge_kw=custom_charge,
-            max_discharge_kw=custom_discharge,
-            efficiency_charging=custom_eff_charge,
-            efficiency_discharging=custom_eff_discharge
-        )
-elif selected_battery_name == "Geen batterij (Baseline)":
-    battery = Battery(capacity_kwh=0, max_charge_kw=0, max_discharge_kw=0)
-else:
-    battery = get_battery(selected_battery_name)
-
-# Provider Selection
-st.sidebar.subheader("Energieleverancier")
-providers = get_providers()
-provider_names = list(providers.keys()) + ["Handmatig invoeren (Custom)"]
-selected_provider_name = st.sidebar.selectbox("Selecteer je leverancier", provider_names)
-
-if selected_provider_name == "Handmatig invoeren (Custom)":
-    with st.sidebar.expander("Provider Details", expanded=True):
-        custom_name = st.text_input("Naam", value="Mijn Leverancier")
-        custom_sub = st.number_input("Vaste leveringskosten (€/jaar)", value=75.0, step=1.0)
-        custom_buy = st.number_input("Inkoop fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
-        custom_sell = st.number_input("Teruglever fee (€/kWh incl. BTW)", value=0.02, format="%.4f")
-        custom_net = st.checkbox("Salderingsregeling (Net Metering)", value=True)
-        
-        provider = Provider(
-            name=custom_name,
-            subscription_cost=custom_sub,
-            buying_fee=custom_buy,
-            selling_fee=custom_sell,
-            net_metering=custom_net,
-            selling_fee_net_metering=True
-        )
-else:
-    provider = providers[selected_provider_name]
-
-# Strategy Selection
-st.sidebar.subheader("Aansturing")
-strategy_map = {
-    "PV Prioriteit (Zelfconsumptie)": "PV",
-    "Kosten Optimaal (MPC)": "MPC"
-}
-selected_strategy = st.sidebar.selectbox("Selecteer Strategie", list(strategy_map.keys()))
-
-# Simulation Options
-# net_metering = st.sidebar.toggle("Salderingsregeling toepassen", value=provider.net_metering)
-net_metering = False # User request: hide but keep logic. Default to False for battery evaluation.
-provider.net_metering = net_metering
-
+st.sidebar.markdown("## Simulatie Configuratie")
 st.sidebar.divider()
 
-# File Uploaders
-st.sidebar.header("2. Data Input")
-
-st.sidebar.subheader("Marktprijzen")
-price_source = st.sidebar.radio("Bron marktprijzen", ["Automatisch (ENTSO-E API)", "Handmatig uploaden (.xlsx)"])
-uploaded_price = None
-if price_source == "Handmatig uploaden (.xlsx)":
-    uploaded_price = st.sidebar.file_uploader("Upload Marktprijzen (ENTSO-E Excel)", type=["xlsx"])
-
-st.sidebar.subheader("Meter Data")
+# Meter Data - at the top
+st.sidebar.subheader("📂 Meter Data")
 uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
 
 with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
@@ -215,7 +143,7 @@ with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
     **Automatisch Herkend:**
     - HomeWizard CSV (Export uit app)
     - Standaard DSO Excel (datum_tijd, levering_normaal, etc.)
-    
+
     **Ander formaat?** Gebruik de 'Aangepaste Mapping' hieronder.
     """)
 with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
@@ -242,6 +170,84 @@ with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
             },
             "is_cumulative": is_cum
         }
+
+st.sidebar.divider()
+
+# Battery Selection
+st.sidebar.subheader("🔋 Batterij")
+_battery_display_to_key = {
+    "5 kWh": "Bliq_5kwh",
+    "10 kWh": "Bliq_10kwh",
+    "10 kWh (snel laden)": "Bliq_10kwh_fast",
+    "15 kWh": "Bliq_15kwh",
+}
+battery_options = ["Geen batterij (Baseline)"] + list(_battery_display_to_key.keys()) + ["Handmatig invoeren (Custom)"]
+selected_battery_name = st.sidebar.selectbox("Selecteer een batterij sjabloon", battery_options, index=2)
+
+if selected_battery_name == "Handmatig invoeren (Custom)":
+    with st.sidebar.expander("Batterij Details", expanded=True):
+        custom_cap = st.number_input("Capaciteit (kWh)", value=10.0, step=0.5)
+        custom_charge = st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1)
+        custom_discharge = st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1)
+        custom_eff_charge = st.slider("Laadefficiëntie (%)", 80, 100, 98) / 100
+        custom_eff_discharge = st.slider("Ontlaadefficiëntie (%)", 80, 100, 98) / 100
+
+        battery = Battery(
+            capacity_kwh=custom_cap,
+            max_charge_kw=custom_charge,
+            max_discharge_kw=custom_discharge,
+            efficiency_charging=custom_eff_charge,
+            efficiency_discharging=custom_eff_discharge
+        )
+elif selected_battery_name == "Geen batterij (Baseline)":
+    battery = Battery(capacity_kwh=0, max_charge_kw=0, max_discharge_kw=0)
+else:
+    battery = get_battery(_battery_display_to_key[selected_battery_name])
+
+st.sidebar.divider()
+
+# Provider - custom input only
+st.sidebar.subheader("💶 Energieleverancier")
+with st.sidebar.expander("Provider Details", expanded=True):
+    custom_name = st.text_input("Naam", value="Mijn Leverancier")
+    custom_sub = st.number_input(
+        "Vaste leveringskosten (€/jaar)", value=75.0, step=1.0,
+        help="Jaarlijks vast bedrag dat je leverancier rekent bovenop de variabele energiekosten."
+    )
+    custom_buy = st.number_input(
+        "Leveranciersopslag inkoop (€/kWh incl. BTW)", value=0.02, format="%.4f",
+        help="Opslag die je leverancier rekent per kWh die je van het net afneemt, bovenop de marktprijs en energiebelasting."
+    )
+    custom_sell = st.number_input(
+        "Leveranciersopslag teruglevering (€/kWh incl. BTW)", value=0.02, format="%.4f",
+        help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
+    )
+
+provider = Provider(
+    name=custom_name,
+    subscription_cost=custom_sub,
+    buying_fee=custom_buy,
+    selling_fee=custom_sell,
+    net_metering=False,
+    selling_fee_net_metering=True
+)
+
+st.sidebar.divider()
+
+# Strategy Selection
+st.sidebar.subheader("🎛️ Aansturing")
+strategy_map = {
+    "PV Prioriteit (Zelfconsumptie)": "PV",
+    "Kosten Optimaal (MPC)": "MPC"
+}
+selected_strategy = st.sidebar.selectbox(
+    "Selecteer Strategie", list(strategy_map.keys()),
+    help="**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
+)
+
+# Price data always via API; manual upload kept in back-end only
+price_source = "Automatisch (ENTSO-E API)"
+uploaded_price = None
 
 st.sidebar.divider()
 
