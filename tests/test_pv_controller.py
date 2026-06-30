@@ -11,11 +11,9 @@ from billing import BillingEngine
 from models import SimulationResult
 
 # Paths to the real data
-PATH_PRICE = Path("../example/day_ahead_2025.xlsx")
-PATH_DATA = Path("../example/P1e-2025-1-01-2026-1-01.csv")
+PATH_PRICE = Path("tests/data/day_ahead_2025.xlsx")
+PATH_DATA = Path("tests/data/test_2025.csv")
 
-@pytest.mark.skipif(not PATH_PRICE.exists() or not PATH_DATA.exists(), 
-                    reason="Real data files not found in ../example/")
 def test_battwatt_pv_controller_e2e():
     """
     E2E test specifically for the Controller_PV strategy using the Simulator.
@@ -38,12 +36,17 @@ def test_battwatt_pv_controller_e2e():
     provider.net_metering = True # Recorded with net_metering=True
     billing = BillingEngine(provider)
     
+    baseline_df = merged_df.copy()
+    net = baseline_df['teruglevering'] - baseline_df['verbruik']
+    baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
+    baseline_df['adjusted_production'] = net.clip(lower=0)
+
     baseline_result = SimulationResult(
-        df=merged_df,
+        df=baseline_df,
         total_production_kwh=merged_df['teruglevering'].sum(),
         total_consumption_kwh=merged_df['verbruik'].sum(),
-        total_adjusted_production_kwh=merged_df['teruglevering'].sum(),
-        total_adjusted_consumption_kwh=merged_df['verbruik'].sum(),
+        total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
+        total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
         final_soc_pct=0,
         final_soc_kwh=0,
         delta_soc_kwh=0
@@ -60,8 +63,9 @@ def test_battwatt_pv_controller_e2e():
            result.delta_soc_kwh >= -1e-6
 
     # 5. FINANCIAL REGRESSION
-    expected_baseline_cost = 254.83
-    expected_simulated_cost = 176.89
+    # Baseline uses per-interval netted flows. Was 254.83 before the fix.
+    expected_baseline_cost = 251.89
+    expected_simulated_cost = 176.88
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05

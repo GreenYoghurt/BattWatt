@@ -4,3 +4,8 @@ tqdm
 matplotlib
 openpyxl
 pytest
+streamlit
+plotly
+pyomo
+highspy
+entsoe-py

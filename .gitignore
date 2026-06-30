@@ -6,3 +6,5 @@ __pycache__/
 tests/simulation_baseline.csv
 agent.log
 GEMINI.md
+.streamlit/
+.env

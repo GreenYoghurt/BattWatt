@@ -6,6 +6,8 @@ class Battery:
         self.efficiency_charging = efficiency_charging
         self.efficiency_discharging = efficiency_discharging
         self.soc_kwh = 0  # State of Charge in kWh
+        self.total_charged_kwh = 0.0
+        self.total_discharged_kwh = 0.0
 
     def _charge(self, energy_kwh:float=0, duration_hours:float=0.25) -> float:
         power_kw = energy_kwh / duration_hours
@@ -19,6 +21,7 @@ class Battery:
         else:
             actual_energy_added = energy_wanting_to_add
         self.soc_kwh += actual_energy_added
+        self.total_charged_kwh += actual_energy_added
 
         # Return actual energy consumed while charging (kWh)
         return actual_energy_added /  self.efficiency_charging
@@ -35,11 +38,14 @@ class Battery:
             actual_energy_removed = energy_wanting_to_remove
         
         self.soc_kwh -= actual_energy_removed
+        self.total_discharged_kwh += actual_energy_removed
     
         # Return actual energy delivered while discharging (kWh)
         return actual_energy_removed * self.efficiency_discharging
     
     def get_soc(self) -> float:
+        if self.capacity_kwh <= 0:
+            return 0.0
         return self.soc_kwh/self.capacity_kwh * 100  # return as percentage
     
     def get_soc_kwh(self) -> float:
