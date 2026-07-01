@@ -128,6 +128,86 @@ def _battery_from_id(bid):
         )
     return get_battery(_battery_display_to_key[preset])
 
+# ── Unified breakdown comparison table ────────────────────────────────────────
+
+def _render_unified_breakdown(all_results, display_baseline, display_costs, breakdown_baseline, include_fixed):
+    bd = breakdown_baseline
+
+    def avg_per_kwh(breakdown, cost_key, vol_key):
+        vol = breakdown[vol_key]
+        return breakdown[cost_key] / vol if vol else 0.0
+
+    all_rows_def = [
+        ("Abonnementskosten",               "abonnementskosten",         False, None,                    True,
+         f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
+        ("Netbeheerskosten",                 "netbeheerskosten",           False, None,                    True,
+         f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
+        ("Belastingvermindering",            "belastingvermindering",      True,  None,                    True,
+         f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
+        ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
+         f"gem. € {avg_per_kwh(bd, 'marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
+        ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
+         f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
+        ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
+         f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
+        ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
+         f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
+        ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
+         f"gem. € {avg_per_kwh(bd, 'teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
+    ]
+    rows = [r for r in all_rows_def if include_fixed or not r[4]]
+
+    def get_contribution(breakdown, key, is_credit):
+        raw = breakdown[key]
+        return -raw if is_credit else raw
+
+    def fmt_amount(amount):
+        return f"−€ {abs(amount):,.2f}" if amount < 0 else f"€ {amount:,.2f}"
+
+    col_widths = [3, 2] + [2] * len(all_results)
+    header_cols = st.columns(col_widths)
+    header_cols[0].markdown("**Post**")
+    header_cols[1].markdown("**Zonder batterij**")
+    for i, res in enumerate(all_results):
+        header_cols[i + 2].markdown(f"**{res['label']}**")
+    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+
+    prev_fixed = None
+    for row_label, key, is_credit, vol_key, is_fixed, tarief_str in rows:
+        if include_fixed:
+            if prev_fixed is None:
+                st.markdown("<div style='margin:0 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Vaste kosten</div>", unsafe_allow_html=True)
+            elif prev_fixed != is_fixed:
+                st.markdown("<div style='margin:6px 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Variabele kosten</div>", unsafe_allow_html=True)
+        prev_fixed = is_fixed
+
+        base_amount = get_contribution(breakdown_baseline, key, is_credit)
+        row_cols = st.columns(col_widths)
+        row_cols[0].markdown(f"{row_label} <small style='color:grey'>({tarief_str})</small>", unsafe_allow_html=True)
+        row_cols[1].markdown(fmt_amount(base_amount))
+
+        for i, res in enumerate(all_results):
+            sim_amount = get_contribution(res['breakdown_simulated'], key, is_credit)
+            diff = base_amount - sim_amount
+            cell = fmt_amount(sim_amount)
+            if abs(diff) >= 0.005:
+                arrow, color = ("▼", "green") if diff > 0 else ("▲", "red")
+                cell += f" <small style='color:{color}'>({arrow} € {abs(diff):,.2f})</small>"
+            row_cols[i + 2].markdown(cell, unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+    total_cols = st.columns(col_widths)
+    total_cols[0].markdown("**Totaal**")
+    total_cols[1].markdown(f"**€ {display_baseline:,.2f}**")
+    for i, (res, dc) in enumerate(zip(all_results, display_costs)):
+        diff = display_baseline - dc
+        if diff > 0:
+            diff_html = f"<span style='color:green'>▼ € {diff:,.2f}</span>"
+        else:
+            diff_html = f"<span style='color:red'>▲ € {abs(diff):,.2f}</span>"
+        total_cols[i + 2].markdown(f"**€ {dc:,.2f}** {diff_html}", unsafe_allow_html=True)
+
+
 # ── Per-battery results renderer ──────────────────────────────────────────────
 
 def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fixed, strategy, key_prefix="bat"):
@@ -594,7 +674,13 @@ elif 'simulation_result' in st.session_state:
         help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken."
     )
 
-    # Compute display baseline
+    def _display_cost(res):
+        bd = res['breakdown_simulated']
+        if not include_fixed and bd:
+            fixed = bd['abonnementskosten'] + bd['netbeheerskosten'] - bd['belastingvermindering']
+            return res['cost_simulated'] - fixed
+        return res['cost_simulated']
+
     if not include_fixed and breakdown_baseline:
         fixed_base = (breakdown_baseline['abonnementskosten']
                       + breakdown_baseline['netbeheerskosten']
@@ -603,37 +689,133 @@ elif 'simulation_result' in st.session_state:
     else:
         display_baseline = cost_baseline
 
-    # Comparison summary — one column per battery + baseline
+    display_costs = [_display_cost(r) for r in all_results]
+
+    # ── Summary metrics ──────────────────────────────────────────────────────
     cols = st.columns(1 + len(all_results))
     cols[0].metric("Baseline (Geen Batterij)", f"€{display_baseline:.2f}")
+    for i, (res, dc) in enumerate(zip(all_results, display_costs)):
+        savings = display_baseline - dc
+        cols[i + 1].metric(res['label'], f"€{dc:.2f}", delta=f"€{savings:.2f} besparing")
+
+    # Cycles + MPC realistic savings row
+    extra_cols = st.columns(1 + len(all_results))
+    extra_cols[0].markdown("")
     for i, res in enumerate(all_results):
-        bd_sim = res['breakdown_simulated']
-        if not include_fixed and bd_sim:
-            fixed_sim = (bd_sim['abonnementskosten']
-                         + bd_sim['netbeheerskosten']
-                         - bd_sim['belastingvermindering'])
-            display_cost = res['cost_simulated'] - fixed_sim
+        cycles = getattr(res['result'], 'total_cycles', 0.0)
+        if strategy == "MPC":
+            realistic = (display_baseline - display_costs[i]) * 0.8
+            extra_cols[i + 1].metric(
+                "Batterij Cycli 🔄", f"{cycles:.1f}",
+                help=f"Realistische besparing (80% van geschatte besparing): €{realistic:.2f}. In de werkelijkheid kan een algoritme nooit een perfecte voorspelling doen van het energieverbruik en de zonne-opbrengst."
+            )
         else:
-            display_cost = res['cost_simulated']
-        display_savings = display_baseline - display_cost
-        cols[i + 1].metric(
-            res['label'],
-            f"€{display_cost:.2f}",
-            delta=f"€{display_savings:.2f} besparing",
-        )
+            extra_cols[i + 1].metric("Batterij Cycli 🔄", f"{cycles:.1f}")
 
     st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
 
     st.divider()
 
-    # Per-battery detail — tabs when >1 battery
-    if len(all_results) == 1:
-        _render_battery_detail(all_results[0], display_baseline, breakdown_baseline, include_fixed, strategy, key_prefix="bat_0")
+    # ── Unified cost breakdown ───────────────────────────────────────────────
+    if breakdown_baseline and all(r['breakdown_simulated'] for r in all_results):
+        with st.expander("Kostenopbouw Vergelijking", expanded=True):
+            _render_unified_breakdown(all_results, display_baseline, display_costs, breakdown_baseline, include_fixed)
+
+    st.divider()
+
+    # ── Chart viewer with toggle ─────────────────────────────────────────────
+    st.subheader("Interactieve Energieflow")
+
+    # Build unique pill labels (handle duplicate battery names)
+    pill_labels = []
+    seen_labels: dict = {}
+    for res in all_results:
+        lbl = res['label']
+        if lbl in seen_labels:
+            seen_labels[lbl] += 1
+            pill_labels.append(f"{lbl} ({seen_labels[lbl]})")
+        else:
+            seen_labels[lbl] = 1
+            pill_labels.append(lbl)
+
+    if len(all_results) > 1:
+        selected_pills = st.pills(
+            "Selecteer batterijen voor weergave",
+            pill_labels,
+            selection_mode="multi",
+            default=pill_labels[:1],
+            key="chart_battery_pills",
+        )
     else:
-        tabs = st.tabs([res['label'] for res in all_results])
-        for i, (tab, res) in enumerate(zip(tabs, all_results)):
-            with tab:
-                _render_battery_detail(res, display_baseline, breakdown_baseline, include_fixed, strategy, key_prefix=f"bat_{i}")
+        selected_pills = pill_labels
+
+    selected_indices = [i for i, lbl in enumerate(pill_labels) if lbl in (selected_pills or [])]
+
+    if not selected_indices:
+        st.info("Selecteer een of meer batterijen hierboven om de grafieken te bekijken.")
+
+    for pos, idx in enumerate(selected_indices):
+        res = all_results[idx]
+        result = res['result']
+        battery = res['battery']
+        key_prefix = f"bat_{idx}"
+
+        if len(selected_indices) > 1:
+            st.markdown(f"#### {pill_labels[idx]}")
+
+        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
+        if duration > pd.Timedelta(days=32):
+            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
+            seasons = {
+                "❄️ Winter (Jan)": 1,
+                "🌱 Lente (Apr)": 4,
+                "☀️ Zomer (Jul)": 7,
+                "🍂 Herfst (Okt)": 10,
+            }
+            available_seasons = {}
+            for name, month in seasons.items():
+                mask = result.df['timestamp'].dt.month == month
+                if mask.any():
+                    start_time = result.df[mask]['timestamp'].min()
+                    end_time = start_time + pd.Timedelta(days=7)
+                    available_seasons[name] = result.df[
+                        (result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)
+                    ]
+            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
+            if not available_seasons:
+                tab_names += ["Begin van periode", "Einde van periode"]
+            chart_tabs = st.tabs(tab_names)
+            for i, t_name in enumerate(tab_names):
+                with chart_tabs[i]:
+                    if i == 0:
+                        plot_df = result.df
+                        slice_title = "Volledige Periode"
+                    else:
+                        s_name = (list(available_seasons.keys())[i - 1]
+                                  if available_seasons
+                                  else ["Begin van periode", "Einde van periode"][i - 1])
+                        plot_df = (available_seasons[s_name]
+                                   if available_seasons
+                                   else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
+                        slice_title = s_name
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_usage_{i}")
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_price_{i}")
+        else:
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, key=f"{key_prefix}_usage")
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, key=f"{key_prefix}_price")
+
+        if pos < len(selected_indices) - 1:
+            st.divider()
+
+    # ── Raw data ─────────────────────────────────────────────────────────────
+    with st.expander("Bekijk Ruwe Simulatiedata"):
+        if len(all_results) > 1:
+            raw_tabs = st.tabs(pill_labels)
+            for tab, res in zip(raw_tabs, all_results):
+                with tab:
+                    st.dataframe(res['result'].df.head(100))
+        else:
+            st.dataframe(all_results[0]['result'].df.head(100))
 
 elif not uploaded_meter:
     st.info("👈 Upload je P1-metergegevens in de zijbalk om de berekening te starten.")
