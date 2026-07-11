@@ -391,6 +391,8 @@ with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
     st.markdown("""
     **Automatisch Herkend:**
     - HomeWizard CSV (Export uit app)
+    - SlimmeMeterPortal.nl dag xls
+    - Kwartierdata single-column Excel (Datum Tijd + netto vermogen, positief = verbruik, negatief = productie)
     - Standaard DSO Excel (datum_tijd, levering_normaal, etc.)
 
     **Ander formaat?** Gebruik de 'Aangepaste Mapping' hieronder.
@@ -402,21 +404,35 @@ with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
     sep = st.text_input("Scheidingsteken (alleen CSV)", value=";")
     dec = st.text_input("Decimaalteken", value=",")
     col_time = st.text_input("Kolomnaam Tijdstip", value="datum_tijd")
-    col_imp = st.text_input("Kolomnaam Verbruik/Import", value="verbruik")
-    col_exp = st.text_input("Kolomnaam Teruglevering/Export", value="teruglevering")
+    single_signed_col = st.checkbox(
+        "Eén kolom met signed waarde (positief = verbruik, negatief = productie)",
+        value=False
+    )
+    if single_signed_col:
+        col_value = st.text_input("Kolomnaam Netto Vermogen", value="waarde")
+    else:
+        col_imp = st.text_input("Kolomnaam Verbruik/Import", value="verbruik")
+        col_exp = st.text_input("Kolomnaam Teruglevering/Export", value="teruglevering")
     is_cum = st.checkbox("Meterstanden zijn cumulatief", value=False)
 
     custom_mapping = None
     if use_custom_mapping:
+        if single_signed_col:
+            columns = {
+                "timestamp": col_time,
+                "value": col_value
+            }
+        else:
+            columns = {
+                "timestamp": col_time,
+                "import": col_imp,
+                "export": col_exp
+            }
         custom_mapping = {
             "format": fmt,
             "delimiter": sep,
             "decimal": dec,
-            "columns": {
-                "timestamp": col_time,
-                "import": col_imp,
-                "export": col_exp
-            },
+            "columns": columns,
             "is_cumulative": is_cum
         }
 
