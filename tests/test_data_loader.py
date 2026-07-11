@@ -148,6 +148,34 @@ def test_gap_detection(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Warning: Detected 1 gaps" in captured.out
 
+def test_negative_value_clip_warning(tmp_path, capsys):
+    # A custom mapping where the source column is signed (e.g. a mistakenly
+    # unhandled negative-feed-in export) should warn, not silently drop data.
+    csv_path = tmp_path / "negative.csv"
+    data = {
+        "Tijdstip": ["2025-01-01 00:00", "2025-01-01 00:15"],
+        "In": [1.0, 1.2],
+        "Uit": [0.5, -0.6],
+    }
+    pd.DataFrame(data).to_csv(csv_path, index=False, sep=";")
+
+    config = {
+        "format": "csv",
+        "delimiter": ";",
+        "columns": {
+            "timestamp": "Tijdstip",
+            "import": "In",
+            "export": "Uit"
+        },
+        "is_cumulative": False
+    }
+
+    df = SmartLoader.load(csv_path, config=config)
+    captured = capsys.readouterr()
+
+    assert "Warning: Clipping negative values to 0" in captured.out
+    assert df.iloc[1]["teruglevering"] == 0.0
+
 def test_slimme_meter_portal_auto_detect():
     df = SmartLoader.load(Path(__file__).parent / "data" / "SlimmeMeterPortal.xlsx")
 

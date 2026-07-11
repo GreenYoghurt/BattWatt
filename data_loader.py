@@ -112,7 +112,14 @@ class MeterDataLoader(ABC):
         df["teruglevering"] = pd.to_numeric(df["teruglevering"], errors="coerce").fillna(0)
         
         # Physical check
-        if (df["verbruik"] < 0).any() or (df["teruglevering"] < 0).any():
+        neg_verbruik = (df["verbruik"] < 0).sum()
+        neg_teruglevering = (df["teruglevering"] < 0).sum()
+        if neg_verbruik or neg_teruglevering:
+            print(
+                f"Warning: Clipping negative values to 0 (verbruik: {neg_verbruik}, "
+                f"teruglevering: {neg_teruglevering}). If this loses real data, the "
+                "loader may need to take the absolute value of a signed source column."
+            )
             df.loc[df["verbruik"] < 0, "verbruik"] = 0
             df.loc[df["teruglevering"] < 0, "teruglevering"] = 0
             
