@@ -199,6 +199,78 @@ class StandardExcelLoader(MeterDataLoader):
         
         return self.validate(df)
 
+class SlimmeMeterPortalLoader(MeterDataLoader):
+    """Loader for 'Slimme Meter Portal' Excel exports."""
+
+    TIME_COL = "Tijdstip"
+    NUM_COLS = [
+        "levering normaaltarief [kWh]",
+        "levering laagtarief [kWh]",
+        "teruglevering normaaltarief [kWh]",
+        "teruglevering laagtarief [kWh]",
+    ]
+
+    def can_handle(self, path: Any) -> bool:
+        name = self._get_name(path)
+        if not (name.lower().endswith(".xlsx") or name.lower().endswith(".xls")):
+            return False
+        try:
+            if hasattr(path, 'seek'): path.seek(0)
+            df_head = pd.read_excel(path, nrows=5)
+            return self.TIME_COL in df_head.columns and "levering normaaltarief [kWh]" in df_head.columns
+        except:
+            return False
+
+    def load(self, path: Any) -> pd.DataFrame:
+        if hasattr(path, 'seek'): path.seek(0)
+        df = pd.read_excel(path)
+
+        df["timestamp"] = pd.to_datetime(df[self.TIME_COL], errors="coerce")
+
+        for col in self.NUM_COLS:
+            if col in df.columns and not pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].astype(str).str.replace(",", ".", regex=False)
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["verbruik"] = df["levering normaaltarief [kWh]"].fillna(0) + df["levering laagtarief [kWh]"].fillna(0)
+        df["teruglevering"] = df["teruglevering normaaltarief [kWh]"].fillna(0) + df["teruglevering laagtarief [kWh]"].fillna(0)
+
+        return self.validate(df)
+
+class SingleColumnLoader(MeterDataLoader):
+    """Loader for Kwartierdata exports with a single signed net-power column
+    (positive = consumption, negative = production)."""
+
+    TIME_COL = "Datum Tijd"
+
+    def can_handle(self, path: Any) -> bool:
+        name = self._get_name(path)
+        if not (name.lower().endswith(".xlsx") or name.lower().endswith(".xls")):
+            return False
+        try:
+            if hasattr(path, 'seek'): path.seek(0)
+            df_head = pd.read_excel(path, nrows=5)
+            if len(df_head.columns) != 2:
+                return False
+            first_col = str(df_head.columns[0]).strip().lower()
+            second_col = df_head.columns[1]
+            return first_col == self.TIME_COL.lower() and (pd.isna(second_col) or str(second_col).startswith("Unnamed"))
+        except:
+            return False
+
+    def load(self, path: Any) -> pd.DataFrame:
+        if hasattr(path, 'seek'): path.seek(0)
+        df = pd.read_excel(path)
+
+        time_col, value_col = df.columns[0], df.columns[1]
+        df["timestamp"] = pd.to_datetime(df[time_col], errors="coerce")
+
+        value = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+        df["verbruik"] = value.clip(lower=0)
+        df["teruglevering"] = (-value).clip(lower=0)
+
+        return self.validate(df)
+
 class GenericMappedLoader(MeterDataLoader):
     """Loader that uses a mapping dictionary for arbitrary formats."""
     
@@ -232,23 +304,35 @@ class GenericMappedLoader(MeterDataLoader):
                 raise ValueError(f"Column '{col_name}' (from mapping '{col_key}') not found in {name}. Available columns: {df.columns.tolist()}")
 
         df["timestamp"] = pd.to_datetime(df[cols["timestamp"]], errors="coerce")
-        imp_col = cols.get("import")
-        exp_col = cols.get("export")
 
-        # Support list of columns to sum
-        if isinstance(imp_col, list):
-            df["verbruik"] = df[imp_col].sum(axis=1)
+        value_col = cols.get("value")
+        if value_col is not None:
+            # Single signed column: positive = consumption, negative = production
+            value = pd.to_numeric(df[value_col], errors="coerce")
+            if is_cumulative:
+                value = value.diff()
+            df["verbruik"] = value.clip(lower=0)
+            df["teruglevering"] = (-value).clip(lower=0)
         else:
-            df["verbruik"] = df[imp_col]
+            imp_col = cols.get("import")
+            exp_col = cols.get("export")
 
-        if isinstance(exp_col, list):
-            df["teruglevering"] = df[exp_col].sum(axis=1)
-        else:
-            df["teruglevering"] = df[exp_col]
+            # Support list of columns to sum
+            if isinstance(imp_col, list):
+                df["verbruik"] = df[imp_col].sum(axis=1)
+            else:
+                df["verbruik"] = df[imp_col]
+
+            if isinstance(exp_col, list):
+                df["teruglevering"] = df[exp_col].sum(axis=1)
+            else:
+                df["teruglevering"] = df[exp_col]
+
+            if is_cumulative:
+                df["verbruik"] = df["verbruik"].diff().fillna(0)
+                df["teruglevering"] = df["teruglevering"].diff().fillna(0)
 
         if is_cumulative:
-            df["verbruik"] = df["verbruik"].diff().fillna(0)
-            df["teruglevering"] = df["teruglevering"].diff().fillna(0)
             return self.validate(df.iloc[1:])
 
         return self.validate(df)
@@ -256,7 +340,7 @@ class GenericMappedLoader(MeterDataLoader):
 class SmartLoader:
     """Main entry point for loading meter data with auto-detection."""
 
-    _loaders: List[Type[MeterDataLoader]] = [HomeWizardLoader, StandardExcelLoader]
+    _loaders: List[Type[MeterDataLoader]] = [HomeWizardLoader, SlimmeMeterPortalLoader, SingleColumnLoader, StandardExcelLoader]
 
     @classmethod
     def load(cls, path: Any, config: Optional[Union[Dict[str, Any], str, Path]] = None) -> pd.DataFrame:

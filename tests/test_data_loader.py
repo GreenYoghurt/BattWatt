@@ -51,10 +51,61 @@ def test_generic_mapped_loader_with_json(tmp_path):
         json.dump(config, f)
     
     df = SmartLoader.load(csv_path, config=config_path)
-    
+
     assert len(df) == 2
     assert df.iloc[0]["verbruik"] == 1.0
     assert df.iloc[1]["teruglevering"] == 0.6
+
+def test_generic_mapped_loader_signed_column(tmp_path):
+    csv_path = tmp_path / "signed.csv"
+    data = {
+        "Tijdstip": ["2025-01-01 00:00", "2025-01-01 00:15", "2025-01-01 00:30"],
+        "Netto": [0.5, -0.3, 0.0],
+    }
+    pd.DataFrame(data).to_csv(csv_path, index=False, sep=";")
+
+    config = {
+        "format": "csv",
+        "delimiter": ";",
+        "columns": {
+            "timestamp": "Tijdstip",
+            "value": "Netto"
+        },
+        "is_cumulative": False
+    }
+
+    df = SmartLoader.load(csv_path, config=config)
+
+    assert len(df) == 3
+    assert df.iloc[0]["verbruik"] == pytest.approx(0.5)
+    assert df.iloc[0]["teruglevering"] == pytest.approx(0.0)
+    assert df.iloc[1]["verbruik"] == pytest.approx(0.0)
+    assert df.iloc[1]["teruglevering"] == pytest.approx(0.3)
+
+def test_generic_mapped_loader_signed_column_cumulative(tmp_path):
+    csv_path = tmp_path / "signed_cumulative.csv"
+    data = {
+        "Tijdstip": pd.date_range("2025-01-01", periods=4, freq="15min").astype(str),
+        "Netto": [10.0, 10.5, 10.2, 11.4],  # cumulative signed meter reading
+    }
+    pd.DataFrame(data).to_csv(csv_path, index=False, sep=";")
+
+    config = {
+        "format": "csv",
+        "delimiter": ";",
+        "columns": {
+            "timestamp": "Tijdstip",
+            "value": "Netto"
+        },
+        "is_cumulative": True
+    }
+
+    df = SmartLoader.load(csv_path, config=config)
+
+    assert len(df) == 3
+    assert df.iloc[0]["verbruik"] == pytest.approx(0.5)
+    assert df.iloc[1]["teruglevering"] == pytest.approx(0.3)
+    assert df.iloc[2]["verbruik"] == pytest.approx(1.2)
 
 def test_file_like_object_support():
     # Simulate a Streamlit UploadedFile using BytesIO
@@ -96,6 +147,41 @@ def test_gap_detection(tmp_path, capsys):
     SmartLoader.load(csv_path)
     captured = capsys.readouterr()
     assert "Warning: Detected 1 gaps" in captured.out
+
+def test_slimme_meter_portal_auto_detect():
+    df = SmartLoader.load(Path(__file__).parent / "data" / "SlimmeMeterPortal.xlsx")
+
+    assert len(df) == 96
+    assert "verbruik" in df.columns
+    assert "teruglevering" in df.columns
+    assert df["verbruik"].sum() == pytest.approx(6.265)
+    assert df["teruglevering"].sum() == pytest.approx(0.0)
+
+def test_single_column_auto_detect():
+    df = SmartLoader.load(Path(__file__).parent / "data" / "Kwartierdata_single_column.xlsx")
+
+    assert len(df) == 3360
+    assert "verbruik" in df.columns
+    assert "teruglevering" in df.columns
+    assert df["verbruik"].sum() == pytest.approx(255.846)
+    assert df["teruglevering"].sum() == pytest.approx(0.0)
+    assert (df["verbruik"] >= 0).all()
+    assert (df["teruglevering"] >= 0).all()
+
+def test_single_column_production_split(tmp_path):
+    # Synthetic file with both positive (consumption) and negative (production) values
+    xlsx_path = tmp_path / "single_column.xlsx"
+    data = {
+        "Datum Tijd": pd.date_range("2025-01-01", periods=4, freq="15min"),
+        None: [0.5, -0.3, 0.0, -1.2],
+    }
+    pd.DataFrame(data).to_excel(xlsx_path, index=False)
+
+    df = SmartLoader.load(xlsx_path)
+
+    assert len(df) == 4
+    assert df["verbruik"].tolist() == pytest.approx([0.5, 0.0, 0.0, 0.0])
+    assert df["teruglevering"].tolist() == pytest.approx([0.0, 0.3, 0.0, 1.2])
 
 def test_auto_detect_failure(tmp_path):
     csv_path = tmp_path / "unknown.csv"
