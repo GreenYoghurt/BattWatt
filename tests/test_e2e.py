@@ -151,8 +151,8 @@ def test_e2e_slimme_meter_portal_format():
 
     _assert_energy_conservation(result)
 
-    expected_baseline_cost = 2.16
-    expected_simulated_cost = 3.38
+    expected_baseline_cost = -0.60
+    expected_simulated_cost = 0.49
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
 

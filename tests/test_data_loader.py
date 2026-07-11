@@ -148,6 +148,34 @@ def test_gap_detection(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Warning: Detected 1 gaps" in captured.out
 
+def test_negative_value_clip_warning(tmp_path, capsys):
+    # A custom mapping where the source column is signed (e.g. a mistakenly
+    # unhandled negative-feed-in export) should warn, not silently drop data.
+    csv_path = tmp_path / "negative.csv"
+    data = {
+        "Tijdstip": ["2025-01-01 00:00", "2025-01-01 00:15"],
+        "In": [1.0, 1.2],
+        "Uit": [0.5, -0.6],
+    }
+    pd.DataFrame(data).to_csv(csv_path, index=False, sep=";")
+
+    config = {
+        "format": "csv",
+        "delimiter": ";",
+        "columns": {
+            "timestamp": "Tijdstip",
+            "import": "In",
+            "export": "Uit"
+        },
+        "is_cumulative": False
+    }
+
+    df = SmartLoader.load(csv_path, config=config)
+    captured = capsys.readouterr()
+
+    assert "Warning: Clipping negative values to 0" in captured.out
+    assert df.iloc[1]["teruglevering"] == 0.0
+
 def test_slimme_meter_portal_auto_detect():
     df = SmartLoader.load(Path(__file__).parent / "data" / "SlimmeMeterPortal.xlsx")
 
@@ -155,7 +183,27 @@ def test_slimme_meter_portal_auto_detect():
     assert "verbruik" in df.columns
     assert "teruglevering" in df.columns
     assert df["verbruik"].sum() == pytest.approx(6.265)
-    assert df["teruglevering"].sum() == pytest.approx(0.0)
+    # The export stores feed-in as negative values; the loader must take the
+    # absolute value rather than let them get clipped to 0 as "invalid".
+    assert df["teruglevering"].sum() == pytest.approx(8.384)
+    assert (df["teruglevering"] > 0).sum() == 43
+
+def test_slimme_meter_portal_negative_feedin(tmp_path):
+    # SlimmeMeterPortal.nl stores feed-in (teruglevering) as negative values.
+    xlsx_path = tmp_path / "slimme_meter.xlsx"
+    data = {
+        "Tijdstip": pd.date_range("2025-01-01", periods=3, freq="15min"),
+        "levering normaaltarief [kWh]": [0.1, 0.0, 0.2],
+        "teruglevering normaaltarief [kWh]": [0.0, -0.3, -0.05],
+        "levering laagtarief [kWh]": [0.0, 0.0, 0.0],
+        "teruglevering laagtarief [kWh]": [0.0, 0.0, 0.0],
+    }
+    pd.DataFrame(data).to_excel(xlsx_path, index=False)
+
+    df = SmartLoader.load(xlsx_path)
+
+    assert df["verbruik"].tolist() == pytest.approx([0.1, 0.0, 0.2])
+    assert df["teruglevering"].tolist() == pytest.approx([0.0, 0.3, 0.05])
 
 def test_single_column_auto_detect():
     df = SmartLoader.load(Path(__file__).parent / "data" / "Kwartierdata_single_column.xlsx")
