@@ -233,7 +233,8 @@ class SlimmeMeterPortalLoader(MeterDataLoader):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df["verbruik"] = df["levering normaaltarief [kWh]"].fillna(0) + df["levering laagtarief [kWh]"].fillna(0)
-        df["teruglevering"] = df["teruglevering normaaltarief [kWh]"].fillna(0) + df["teruglevering laagtarief [kWh]"].fillna(0)
+        # This export stores feed-in as a negative value, unlike the other Excel formats.
+        df["teruglevering"] = df["teruglevering normaaltarief [kWh]"].fillna(0).abs() + df["teruglevering laagtarief [kWh]"].fillna(0).abs()
 
         return self.validate(df)
 
