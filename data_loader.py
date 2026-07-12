@@ -245,6 +245,52 @@ class SlimmeMeterPortalLoader(MeterDataLoader):
 
         return self.validate(df)
 
+class SlimmeMeterPortalAPILoader(MeterDataLoader):
+    """Transforms usage records from the Slimme Meter Portal UserAPI (live API,
+    not a file export) into the standard verbruik/teruglevering DataFrame.
+
+    Not part of SmartLoader's file-based auto-detection: data arrives as
+    already-parsed JSON from `SlimmeMeterPortalClient`, not a file path.
+    """
+
+    def can_handle(self, path: Any) -> bool:
+        return False
+
+    def load(self, path: Any) -> pd.DataFrame:
+        raise NotImplementedError("Use load_usages() with parsed API usage records instead.")
+
+    def load_usages(self, usages: List[Dict[str, Any]]) -> pd.DataFrame:
+        if not usages:
+            raise ValueError("No usage records to load.")
+
+        df = pd.DataFrame(usages)
+        # The API returns "dd-mm-YYYY HH:MM:SS +ZZZZ" (confirmed against the
+        # live API; the OpenAPI spec only declares `type: string`). The
+        # offset already reflects Europe/Amsterdam's DST state, so converting
+        # to that zone and dropping the offset yields consistent local wall
+        # time, matching the naive timestamps the rest of the pipeline uses.
+        timestamps = pd.to_datetime(df["time"], format="%d-%m-%Y %H:%M:%S %z", errors="coerce", utc=True)
+        df["timestamp"] = timestamps.dt.tz_convert("Europe/Amsterdam").dt.tz_localize(None)
+
+        def numeric(col: str) -> pd.Series:
+            if col not in df.columns:
+                return pd.Series(0.0, index=df.index)
+            # Values use Dutch decimal-comma formatting (e.g. "0,04").
+            series = df[col].astype(str).str.replace(",", ".", regex=False)
+            return pd.to_numeric(series, errors="coerce").fillna(0)
+
+        # Dual-tariff meters report delivery_high/delivery_low; single-tariff
+        # meters only populate the combined 'delivery' field.
+        if "delivery_high" in df.columns or "delivery_low" in df.columns:
+            df["verbruik"] = numeric("delivery_high") + numeric("delivery_low")
+        else:
+            df["verbruik"] = numeric("delivery")
+
+        # The API has no combined 'returned_delivery' field; high/low always cover it.
+        df["teruglevering"] = numeric("returned_delivery_high") + numeric("returned_delivery_low")
+
+        return self.validate(df)
+
 class SingleColumnLoader(MeterDataLoader):
     """Loader for Kwartierdata exports with a single signed net-power column
     (positive = consumption, negative = production)."""

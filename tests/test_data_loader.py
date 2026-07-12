@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from data_loader import SmartLoader
+from data_loader import SmartLoader, SlimmeMeterPortalAPILoader
 import json
 import io
 
@@ -204,6 +204,69 @@ def test_slimme_meter_portal_negative_feedin(tmp_path):
 
     assert df["verbruik"].tolist() == pytest.approx([0.1, 0.0, 0.2])
     assert df["teruglevering"].tolist() == pytest.approx([0.0, 0.3, 0.05])
+
+def test_slimme_meter_portal_api_loader_high_low():
+    # Real API format: "dd-mm-YYYY HH:MM:SS +ZZZZ" timestamps, Dutch
+    # decimal-comma numbers, and `None` for unpopulated tariff fields.
+    usages = [
+        {
+            "time": "01-01-2025 00:00:00 +0100",
+            "delivery_high": "0,10",
+            "delivery_low": "0,05",
+            "returned_delivery_high": None,
+            "returned_delivery_low": "0,20",
+            "temperature": "5,0",
+        },
+        {
+            "time": "01-01-2025 00:15:00 +0100",
+            "delivery_high": "0,20",
+            "delivery_low": None,
+            "returned_delivery_high": None,
+            "returned_delivery_low": "0,00",
+            "temperature": "5,1",
+        },
+    ]
+
+    df = SlimmeMeterPortalAPILoader().load_usages(usages)
+
+    assert len(df) == 2
+    assert df["verbruik"].tolist() == pytest.approx([0.15, 0.20])
+    assert df["teruglevering"].tolist() == pytest.approx([0.20, 0.00])
+    assert df["timestamp"].tolist() == [
+        pd.Timestamp("2025-01-01 00:00:00"),
+        pd.Timestamp("2025-01-01 00:15:00"),
+    ]
+
+def test_slimme_meter_portal_api_loader_single_tariff_fallback():
+    # Single-tariff meters only populate the combined 'delivery' field.
+    usages = [
+        {"time": "01-01-2025 00:00:00 +0100", "delivery": "0,30", "returned_delivery_high": "0,10", "temperature": "5,0"},
+        {"time": "01-01-2025 00:15:00 +0100", "delivery": "0,10", "returned_delivery_high": "0,00", "temperature": "5,0"},
+    ]
+
+    df = SlimmeMeterPortalAPILoader().load_usages(usages)
+
+    assert df["verbruik"].tolist() == pytest.approx([0.30, 0.10])
+    assert df["teruglevering"].tolist() == pytest.approx([0.10, 0.00])
+
+def test_slimme_meter_portal_api_loader_dst_transition_uses_local_wall_time():
+    # Europe/Amsterdam DST end 2025-10-26: offset shifts from +0200 to +0100.
+    # Converting to local time and dropping tz must reflect that, not UTC.
+    usages = [
+        {"time": "26-10-2025 02:45:00 +0200", "delivery": "0,10", "returned_delivery_high": "0,00"},
+        {"time": "26-10-2025 02:00:00 +0100", "delivery": "0,10", "returned_delivery_high": "0,00"},
+    ]
+
+    df = SlimmeMeterPortalAPILoader().load_usages(usages)
+
+    assert df["timestamp"].tolist() == [
+        pd.Timestamp("2025-10-26 02:00:00"),
+        pd.Timestamp("2025-10-26 02:45:00"),
+    ]
+
+def test_slimme_meter_portal_api_loader_empty_raises():
+    with pytest.raises(ValueError):
+        SlimmeMeterPortalAPILoader().load_usages([])
 
 def test_single_column_auto_detect():
     df = SmartLoader.load(Path(__file__).parent / "data" / "Kwartierdata_single_column.xlsx")
