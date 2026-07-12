@@ -2,6 +2,7 @@ __pycache__/
 .venv/
 *.csv
 *.xlsx
+.tmp/
 .DS_Store
 tests/simulation_baseline.csv
 agent.log
