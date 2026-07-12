@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
-from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data
+from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data, SlimmeMeterPortalAPILoader
+from slimmemeterportal_client import SlimmeMeterPortalClient, SlimmeMeterPortalError, flatten_usage_range, find_missing_dates
 from energy_providers import Provider
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_MPC
@@ -370,6 +371,11 @@ try:
 except Exception:
     ENTSOE_API_KEY = None
 
+try:
+    SMP_API_KEY_DEFAULT = st.secrets["SLIMMEMETERPORTAL_API_KEY"]
+except Exception:
+    SMP_API_KEY_DEFAULT = None
+
 # ── Page header ───────────────────────────────────────────────────────────────
 
 st.title("🔋 BattWatt: Thuisbatterij Evaluator")
@@ -385,56 +391,125 @@ st.sidebar.divider()
 
 # 1. Meter Data
 st.sidebar.subheader("📂 Meter Data")
-uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
+meter_source = st.sidebar.radio("Databron", ["Bestand upload", "SlimmeMeterPortal API"], horizontal=True)
 
-with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
-    st.markdown("""
-    **Automatisch Herkend:**
-    - HomeWizard CSV (Export uit app)
-    - SlimmeMeterPortal.nl dag xls
-    - Kwartierdata single-column Excel (Datum Tijd + netto vermogen, positief = verbruik, negatief = productie)
-    - Standaard DSO Excel (datum_tijd, levering_normaal, etc.)
+uploaded_meter = None
+custom_mapping = None
 
-    **Ander formaat?** Gebruik de 'Aangepaste Mapping' hieronder.
-    """)
-with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
-    st.info("Alleen nodig als je bestand niet automatisch wordt herkend.")
-    use_custom_mapping = st.checkbox("Gebruik handmatige mapping", value=False)
-    fmt = st.selectbox("Bestandstype", ["csv", "excel"], index=0)
-    sep = st.text_input("Scheidingsteken (alleen CSV)", value=";")
-    dec = st.text_input("Decimaalteken", value=",")
-    col_time = st.text_input("Kolomnaam Tijdstip", value="datum_tijd")
-    single_signed_col = st.checkbox(
-        "Eén kolom met signed waarde (positief = verbruik, negatief = productie)",
-        value=False
-    )
-    if single_signed_col:
-        col_value = st.text_input("Kolomnaam Netto Vermogen", value="waarde")
-    else:
-        col_imp = st.text_input("Kolomnaam Verbruik/Import", value="verbruik")
-        col_exp = st.text_input("Kolomnaam Teruglevering/Export", value="teruglevering")
-    is_cum = st.checkbox("Meterstanden zijn cumulatief", value=False)
+if meter_source == "Bestand upload":
+    uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
 
-    custom_mapping = None
-    if use_custom_mapping:
+    with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
+        st.markdown("""
+        **Automatisch Herkend:**
+        - HomeWizard CSV (Export uit app)
+        - SlimmeMeterPortal.nl dag xls
+        - Kwartierdata single-column Excel (Datum Tijd + netto vermogen, positief = verbruik, negatief = productie)
+        - Standaard DSO Excel (datum_tijd, levering_normaal, etc.)
+
+        **Ander formaat?** Gebruik de 'Aangepaste Mapping' hieronder.
+        """)
+    with st.sidebar.expander("📝 Aangepaste Mapping", expanded=False):
+        st.info("Alleen nodig als je bestand niet automatisch wordt herkend.")
+        use_custom_mapping = st.checkbox("Gebruik handmatige mapping", value=False)
+        fmt = st.selectbox("Bestandstype", ["csv", "excel"], index=0)
+        sep = st.text_input("Scheidingsteken (alleen CSV)", value=";")
+        dec = st.text_input("Decimaalteken", value=",")
+        col_time = st.text_input("Kolomnaam Tijdstip", value="datum_tijd")
+        single_signed_col = st.checkbox(
+            "Eén kolom met signed waarde (positief = verbruik, negatief = productie)",
+            value=False
+        )
         if single_signed_col:
-            columns = {
-                "timestamp": col_time,
-                "value": col_value
-            }
+            col_value = st.text_input("Kolomnaam Netto Vermogen", value="waarde")
         else:
-            columns = {
-                "timestamp": col_time,
-                "import": col_imp,
-                "export": col_exp
+            col_imp = st.text_input("Kolomnaam Verbruik/Import", value="verbruik")
+            col_exp = st.text_input("Kolomnaam Teruglevering/Export", value="teruglevering")
+        is_cum = st.checkbox("Meterstanden zijn cumulatief", value=False)
+
+        if use_custom_mapping:
+            if single_signed_col:
+                columns = {
+                    "timestamp": col_time,
+                    "value": col_value
+                }
+            else:
+                columns = {
+                    "timestamp": col_time,
+                    "import": col_imp,
+                    "export": col_exp
+                }
+            custom_mapping = {
+                "format": fmt,
+                "delimiter": sep,
+                "decimal": dec,
+                "columns": columns,
+                "is_cumulative": is_cum
             }
-        custom_mapping = {
-            "format": fmt,
-            "delimiter": sep,
-            "decimal": dec,
-            "columns": columns,
-            "is_cumulative": is_cum
-        }
+
+else:  # SlimmeMeterPortal API
+    smp_api_key = st.sidebar.text_input(
+        "API-Key",
+        type="password",
+        value=st.session_state.get("smp_api_key", SMP_API_KEY_DEFAULT or ""),
+        help="API-Key uit je SlimmeMeterPortal.nl account.",
+    )
+
+    if st.sidebar.button("🔌 Aansluitingen ophalen"):
+        st.session_state["smp_api_key"] = smp_api_key
+        st.session_state.pop("smp_meter_df", None)
+        st.session_state.pop("smp_missing_dates", None)
+        try:
+            client = SlimmeMeterPortalClient(api_key=smp_api_key)
+            st.session_state["smp_connections"] = client.get_connections()
+        except SlimmeMeterPortalError as e:
+            st.session_state.pop("smp_connections", None)
+            st.sidebar.error(f"Fout bij ophalen aansluitingen: {e}")
+
+    connections = st.session_state.get("smp_connections")
+    if connections:
+        conn_options = {f"{c.meter_identifier} ({c.connection_type})": c for c in connections}
+        selected_conn_label = st.sidebar.selectbox("Aansluiting", list(conn_options.keys()))
+        selected_connection = conn_options[selected_conn_label]
+
+        date_col1, date_col2 = st.sidebar.columns(2)
+        smp_start_date = date_col1.date_input(
+            "Vanaf", value=pd.Timestamp.now().normalize() - pd.Timedelta(days=30), format="YYYY-MM-DD"
+        )
+        smp_end_date = date_col2.date_input("Tot en met", value=pd.Timestamp.now().normalize(), format="YYYY-MM-DD")
+
+        if st.sidebar.button("⬇️ Data ophalen"):
+            if smp_start_date > smp_end_date:
+                st.sidebar.error("'Vanaf' moet voor 'Tot en met' liggen.")
+            else:
+                dates = list(pd.date_range(smp_start_date, smp_end_date, freq="D").date)
+                progress_bar = st.sidebar.progress(0, text="Data ophalen via SlimmeMeterPortal API...")
+                try:
+                    client = SlimmeMeterPortalClient(api_key=st.session_state["smp_api_key"])
+                    day_responses = client.get_usage_range(
+                        selected_connection.meter_identifier,
+                        dates,
+                        progress_callback=lambda cur, tot: progress_bar.progress(
+                            cur / tot, text=f"Data ophalen: dag {cur}/{tot}"
+                        ),
+                    )
+                    usages = flatten_usage_range(day_responses)
+                    st.session_state["smp_meter_df"] = SlimmeMeterPortalAPILoader().load_usages(usages)
+                    st.session_state["smp_missing_dates"] = find_missing_dates(dates, day_responses)
+                except (SlimmeMeterPortalError, ValueError) as e:
+                    st.session_state.pop("smp_meter_df", None)
+                    st.session_state.pop("smp_missing_dates", None)
+                    st.sidebar.error(f"Fout bij ophalen data: {e}")
+                finally:
+                    progress_bar.empty()
+
+    if st.session_state.get("smp_meter_df") is not None:
+        st.sidebar.success(f"{len(st.session_state['smp_meter_df'])} intervallen geladen.")
+        missing_dates = st.session_state.get("smp_missing_dates") or []
+        if missing_dates:
+            shown = ", ".join(d.strftime("%Y-%m-%d") for d in missing_dates[:5])
+            extra = f" en {len(missing_dates) - 5} andere dag(en)" if len(missing_dates) > 5 else ""
+            st.sidebar.warning(f"⚠️ Geen data voor {len(missing_dates)} dag(en): {shown}{extra}.")
 
 st.sidebar.divider()
 
@@ -536,7 +611,8 @@ st.sidebar.divider()
 # ── Simulate button ───────────────────────────────────────────────────────────
 
 can_simulate = False
-if uploaded_meter:
+meter_data_ready = bool(uploaded_meter) if meter_source == "Bestand upload" else st.session_state.get("smp_meter_df") is not None
+if meter_data_ready:
     can_simulate = True
     if not ENTSOE_API_KEY:
         st.sidebar.error("⚠️ Geen API Key geconfigureerd.")
@@ -630,7 +706,10 @@ def _run_simulation(meter_df):
 
 if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
     try:
-        meter_df, data_checks = SmartLoader.load_with_checks(uploaded_meter, config=custom_mapping)
+        if meter_source == "Bestand upload":
+            meter_df, data_checks = SmartLoader.load_with_checks(uploaded_meter, config=custom_mapping)
+        else:
+            meter_df, data_checks = st.session_state["smp_meter_df"], []
     except Exception as e:
         st.error(f"Fout bij inlezen meterdata: {e}")
         st.stop()

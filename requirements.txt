@@ -9,3 +9,4 @@ plotly
 pyomo
 highspy
 entsoe-py
+requests
