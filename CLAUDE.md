@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Workflow
+
+**Never commit or make changes directly on `main`.** Before starting any feature, fix, or other code change, create a dedicated branch first (e.g. `feature/<name>`, `fix/<name>`) and work there. If you notice mid-task that edits were made on `main` without a branch, stop and move the work to a new branch (`git checkout -b <name>`) before continuing or committing.
+
 ## Commands
 
 ```powershell

@@ -383,6 +383,50 @@ st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je P1-metergegevens om te beginnen.
 """)
+st.markdown(
+    """
+    <style>
+    .bw-privacy-note {
+        display: flex; align-items: center; gap: 4px;
+        font-size: 0.875rem; color: rgba(128, 128, 128, 0.9);
+        margin-top: -0.5rem; margin-bottom: 1rem;
+    }
+    .bw-privacy-note details { position: relative; display: inline-block; }
+    .bw-privacy-note summary { list-style: none; cursor: pointer; }
+    .bw-privacy-note summary::-webkit-details-marker { display: none; }
+    .bw-privacy-note summary .bw-icon {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 15px; height: 15px; border-radius: 50%;
+        border: 1px solid currentColor; font-size: 10px; line-height: 1;
+        opacity: 0.7;
+    }
+    .bw-privacy-note .bw-tooltip {
+        position: absolute; z-index: 100; top: 22px; left: 0;
+        background: var(--bw-tooltip-bg, #ffffff); color: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 6px;
+        padding: 8px 10px; width: 260px; font-size: 0.8rem; line-height: 1.4;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+    .bw-privacy-note .bw-tooltip a { color: inherit; text-decoration: underline; }
+    @media (prefers-color-scheme: dark) {
+        .bw-privacy-note .bw-tooltip { --bw-tooltip-bg: #262730; }
+    }
+    </style>
+    <div class="bw-privacy-note">
+        🔒 Deze applicatie slaat <u>geen enkele</u> data op.
+        <details>
+            <summary><span class="bw-icon">?</span></summary>
+            <div class="bw-tooltip">
+                Alle uploads en berekeningen blijven binnen uw sessie. Deze app wordt gehost op
+                Streamlit Community Cloud — zie het
+                <a href="https://streamlit.io/privacy-policy" target="_blank" rel="noopener">Streamlit privacybeleid</a>
+                voor meer informatie.
+            </div>
+        </details>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
