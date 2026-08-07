@@ -1,5 +1,13 @@
 # Strategy: BattWatt Web Interactive Tool
 
+> **Status: MVP shipped, iterating.** `app.py` implements the "Phase 1: MVP" goals below and
+> has grown beyond them (multi-battery comparison, itemised cost breakdown, live
+> SlimmeMeterPortal API import, data-quality warnings, a privacy notice implementing the
+> "No-Store" policy from §2.A). Still open, tracked in `TODO.md`: a provider dropdown with
+> pre-filled fees for common Dutch suppliers (§2.B currently only supports manual fee entry),
+> a net-metering (saldering) toggle in the UI, and exposing the rule-based Price controller
+> as a strategy option (currently CLI/test-only).
+
 This document outlines the roadmap to transform the BattWatt simulation engine into a user-friendly web application using **Streamlit**.
 
 ## 1. Goal

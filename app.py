@@ -382,6 +382,9 @@ st.title("🔋 BattWatt: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je P1-metergegevens om te beginnen.
+
+Deze tool gaat uit van een **dynamisch energiecontract** en houdt geen rekening met de
+salderingsregeling — de situatie die vanaf 2027 voor iedereen de werkelijkheid wordt.
 """)
 st.markdown(
     """

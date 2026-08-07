@@ -1,6 +1,14 @@
 # Refactoring Proposal: BattWatt Core Architecture
 
+> **Status: Implemented.** All four phases below have landed — `simulator.py`, `models.py`,
+> `billing.py`, and the `controllers/` package now match this proposal (see `TODO.md`'s
+> "Architecture (Completed)" section and `CLAUDE.md`'s Architecture section for the current
+> shape). This document is kept as a historical design record; treat the "Proposed Changes"
+> below as describing what exists today rather than a future plan.
+
 ## 1. Current State & Pain Points
+
+*(This section describes the pre-refactor state and is retained for context — the duplication it describes no longer exists.)*
 Currently, the project logic is spread across several script-like files. The simulation loop is duplicated in `example.py`, `tests/test_e2e.py`, and `tests/test_pv_controller.py`.
 
 - **Duplicated Logic:** The grid interaction formula `net_grid_energy = (prod - cons) - (to_bat - from_bat) + (to_grid - from_grid)` is repeated manually.
