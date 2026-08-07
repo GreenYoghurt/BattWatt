@@ -42,7 +42,9 @@ DataLoader → merge_data() → Simulator(Battery, Controller) → SimulationRes
 **`controllers/` — strategy layer.** All controllers inherit from `BaseController` (defined in `controllers/controller_PV.py`) and implement a single `step(production, consumption, datetime_index, duration_hours)` returning `(to_battery, from_battery)` as intention signals — the `Simulator` applies the battery physics afterwards.
 - `Controller_PV`: maximizes PV self-consumption
 - `Controller_price`: rule-based using daily 20th/80th price quantiles
-- `Controller_MPC`: Pyomo + HiGHS optimization over a configurable look-ahead horizon with plan caching
+- `Controller_MPC`: Pyomo + HiGHS (`appsi_highs`, via the `highspy` package — no separate solver install needed) optimization over a configurable look-ahead horizon with plan caching
+
+`app.py`'s strategy selector only exposes `Controller_PV` and `Controller_MPC`; `Controller_price` is currently only wired up in `example.py` and the test suite.
 
 **`energy_providers.py` — Dutch market financials.** `Provider.calculate_flexible_costs()` handles two tax accounting regimes:
 - `net_metering=True`: energy tax is applied to **net annual consumption** (import − export)
@@ -52,9 +54,17 @@ This distinction is the most financially significant correctness constraint in t
 
 **`billing.py` — cost accounting.** `BillingEngine` wraps a `Provider` and computes absolute bills and savings by comparing a baseline `SimulationResult` (no battery) against a simulated one.
 
-**`data_loader.py` — ingestion.** `SmartLoader.load()` auto-detects file format (HomeWizard CSV or DSO Excel). `merge_data()` joins meter data with ENTSO-E price data using nearest-timestamp merge. Raw ENTSO-E prices are in EUR/MWh and must be divided by 1000 before use.
+**`data_loader.py` — ingestion.** `SmartLoader.load()` auto-detects file format among the registered `MeterDataLoader` subclasses (HomeWizard CSV, SlimmeMeterPortal Excel, single-column signed "Kwartierdata" Excel, standard DSO Excel); `SmartLoader.load(path, config=...)` uses `GenericMappedLoader` for a JSON column-mapping config instead. `SmartLoader.load_with_checks()` additionally runs `data_checks.py`'s data-quality checks (see below) and returns `(df, check_results)`. `merge_data()` joins meter data with ENTSO-E price data using nearest-timestamp merge. Raw ENTSO-E prices are in EUR/MWh and must be divided by 1000 before use. `SlimmeMeterPortalAPILoader` is a `MeterDataLoader` that is *not* part of SmartLoader's auto-detection (`can_handle()` always returns `False`) — it's driven explicitly via `load_usages()` on parsed API JSON from `slimmemeterportal_client.py`.
+
+**`slimmemeterportal_client.py` — SlimmeMeterPortal UserAPI client.** `SlimmeMeterPortalClient` wraps the live UserAPI (connections + per-day usage) behind typed exceptions (`AuthenticationError`, `RateLimitError`, `BadRequestError`). `get_usage_range()` fetches a date range by issuing one request per day, sleeping and retrying on rate limits. Feeds `data_loader.SlimmeMeterPortalAPILoader.load_usages()`.
+
+**`data_checks.py` — pre-simulation data quality checks.** `DataCheck` subclasses inspect the *raw* (pre-`validate()`) loader output and return an optional `CheckResult` (severity + message); `run_checks()` runs the registry. `app.py` surfaces failed checks as warnings the user must explicitly acknowledge before simulating. Only loaders that implement `get_raw_df()` (currently `HomeWizardLoader`) participate.
 
 **`models.py`** — `SimulationResult` dataclass that carries both the timestep DataFrame (`df`) and aggregate totals.
+
+**`app.py` — Streamlit UI.** Lets the user configure meter data source, one or more battery configs, provider fees, and strategy, then runs the baseline plus each battery simulation sequentially and renders a unified cost-breakdown comparison and per-battery charts. Not part of the core simulation pipeline — treat it as a consumer of `SmartLoader`/`Simulator`/`BillingEngine`, not a place to add simulation logic.
+
+**`plotter.py` — Matplotlib plotting for the CLI examples** (`example.py`, `example_mpc.py`). Unrelated to `app.py`'s Plotly charts.
 
 ### DataFrame Conventions
 
@@ -67,8 +77,8 @@ After simulation, `Simulator` adds `adjusted_consumption`, `adjusted_production`
 
 ### Test Baselines
 
-`tests/test_e2e.py` and `tests/test_pv_controller.py` contain **hardcoded financial expectations** (e.g., `expected_baseline_cost = 443.30`). Any logic change that shifts these values requires explicit justification before updating the constants. The optional `tests/simulation_baseline.csv` provides a per-timestep regression reference.
+`tests/test_e2e.py`, `tests/test_pv_controller.py`, `tests/test_mpc_e2e.py`, and `tests/test_conservation.py` contain **hardcoded financial expectations** (e.g., `expected_baseline_cost = 430.73`). Any logic change that shifts these values requires explicit justification before updating the constants. The optional `tests/simulation_baseline.csv` (and `tests/mpc_simulation_baseline.csv` for the MPC path) provides a per-timestep regression reference.
 
 ### Controllers Package vs. Top-Level Files
 
-The active controllers live in `controllers/` (the package). Top-level `controller_PV.py` and `controller_price.py` are legacy files — imports in `example.py` and `app.py` use `from controllers.controller_* import ...`.
+The active controllers live in `controllers/` (the package). Top-level `controller_PV.py` and `controller_price.py` are legacy files. `example.py`/`example_mpc.py` import directly from the specific submodule (`from controllers.controller_MPC import Controller_MPC`); `app.py` imports from the package root (`from controllers import Controller_PV, Controller_MPC`), which re-exports the same classes via `controllers/__init__.py`.

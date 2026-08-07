@@ -1,5 +1,16 @@
 # Data Loading Strategy - BattWatt
 
+> **Status: Mostly implemented.** `data_loader.py` now has a `MeterDataLoader` registry
+> (`HomeWizardLoader`, `SlimmeMeterPortalLoader`, `SingleColumnLoader`, `StandardExcelLoader`)
+> with `SmartLoader` doing format auto-detection, plus `GenericMappedLoader` for custom
+> mappings and a `DataCheck` framework (`data_checks.py`) for validation warnings — see
+> `CLAUDE.md`'s Architecture section for the current module layout. One deviation from the
+> plan below: the generic mapping config is **JSON, not YAML** (see the corrected example in
+> "User-Friendly Configuration" below). Not yet built: a live-fetch loader per platform beyond
+> the SlimmeMeterPortal UserAPI (`slimmemeterportal_client.py` + `SlimmeMeterPortalAPILoader`),
+> and no "sniff and suggest a mapping" fallback beyond the current auto-detect + explicit-error
+> flow.
+
 Currently, BattWatt supports specific formats from HomeWizard and a generic Excel format. To make the project more accessible to users with different energy monitoring systems (e.g., Enphase, SolarEdge, P1-monitors, or raw DSO exports), we need a flexible and user-friendly data loading strategy.
 
 ## Goal
@@ -27,19 +38,26 @@ To improve user experience, the system should attempt to "sniff" the file:
 
 ## User-Friendly Configuration (Schema Mapping)
 
-If a user has a custom CSV, they shouldn't have to write Python code. They should be able to provide a simple mapping:
+If a user has a custom CSV, they shouldn't have to write Python code. They should be able to provide a simple mapping. **As implemented, this is a JSON config** (passed as a dict, or a path loaded with `json.load`) rather than the YAML originally sketched here:
 
-```yaml
-# custom_load_config.yaml
-format: csv
-delimiter: ";"
-decimal: ","
-columns:
-  timestamp: "Tijdstip"
-  import: "Totaal Verbruik (kWh)"
-  export: "Totaal Injectie (kWh)"
-is_cumulative: true  # If true, the loader will automatically calculate .diff()
+```json
+{
+  "format": "csv",
+  "delimiter": ";",
+  "decimal": ",",
+  "columns": {
+    "timestamp": "Tijdstip",
+    "import": "Totaal Verbruik (kWh)",
+    "export": "Totaal Injectie (kWh)"
+  },
+  "is_cumulative": true
+}
 ```
+
+`columns` also supports a single signed `"value"` column (positive = consumption, negative =
+production, as used by `SingleColumnLoader`) instead of separate `import`/`export` keys — see
+`GenericMappedLoader.load()` in `data_loader.py`. The web app exposes this mapping via the
+"Aangepaste Mapping" sidebar expander in `app.py`.
 
 ## Implementation Plan
 

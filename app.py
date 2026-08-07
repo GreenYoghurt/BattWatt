@@ -382,6 +382,9 @@ st.title("🔋 BattWatt: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je P1-metergegevens om te beginnen.
+
+Deze tool gaat uit van een **dynamisch energiecontract** en houdt geen rekening met de
+salderingsregeling — de situatie die vanaf 2027 voor iedereen de werkelijkheid wordt.
 """)
 st.markdown(
     """
@@ -958,3 +961,26 @@ elif 'simulation_result' in st.session_state:
 
 elif not uploaded_meter:
     st.info("👈 Upload je P1-metergegevens in de zijbalk om de berekening te starten.")
+    st.markdown("""
+### Wat doet deze app?
+Deze app rekent uit hoeveel geld je zou besparen met een thuisbatterij. Dat doet hij met
+jouw eigen stroomgegevens (hoeveel je verbruikt en hoeveel zon je opwekt) en de actuele
+stroomprijzen.
+
+**Zo werkt het:**
+1. **Upload je stroomgegevens** — een bestand van je slimme meter, of we halen ze automatisch
+   voor je op.
+2. **Kies een batterij** — een standaardmodel, of vul zelf de grootte in. Je mag ook meerdere
+   batterijen tegelijk vergelijken.
+3. **Vul je energieleverancier in** — wat je betaalt per maand en per kWh stroom.
+4. **Kies hoe de batterij wordt aangestuurd** — dit bepaalt wanneer de batterij automatisch
+   laadt en ontlaadt:
+   - **PV Prioriteit**: de batterij laadt op met je eigen zonnestroom en gebruikt die
+     later, zodat je zo min mogelijk stroom van het net hoeft te kopen.
+   - **Kosten Optimaal**: de batterij kijkt vooruit naar de verwachte stroomprijzen en
+     laadt automatisch op de goedkoopste momenten, om zo veel mogelijk geld te besparen.
+5. **Klik op simuleren** — je ziet meteen hoeveel je zou besparen, met een duidelijke
+   uitleg van de kosten en grafieken van je verbruik.
+
+Je gegevens worden nergens opgeslagen — alles blijft alleen op je eigen scherm.
+""")
