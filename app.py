@@ -386,7 +386,6 @@ Upload je **kwartiergegevens** (P1-meterdata per 15 minuten) om te beginnen.
 Deze tool gaat uit van een **dynamisch energiecontract** en houdt geen rekening met de
 salderingsregeling — de situatie die vanaf 2027 voor iedereen de werkelijkheid wordt.
 """)
-st.caption("📂 Broncode & documentatie: [GitHub — GreenYoghurt/BattWatt](https://github.com/GreenYoghurt/BattWatt)")
 st.markdown(
     """
     <style>
@@ -445,7 +444,7 @@ meter_source = st.sidebar.radio(
     captions=[
         "Upload zelf een bestand met kwartiergegevens, geëxporteerd uit je meter-app of leveranciersportaal.",
         "Haal je kwartiergegevens automatisch op via [SlimmeMeterPortal.nl](https://www.slimmemeterportal.nl/), "
-        "een dienst die je slimme meter uitleest (API-key vereist).",
+        "een dienst die je slimme meter uitleest (abonnement vereist).",
     ],
     horizontal=True,
 )
@@ -607,8 +606,14 @@ for bid in list(st.session_state.battery_ids):
 
         if st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)":
             st.number_input("Capaciteit (kWh)", value=10.0, step=0.5, key=f"bat_cap_{bid}")
-            st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1, key=f"bat_charge_{bid}")
-            st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1, key=f"bat_discharge_{bid}")
+            st.number_input(
+                "Max. Laadvermogen (kW)", value=None, step=0.1, key=f"bat_charge_{bid}",
+                placeholder="bijv. 3.68"
+            )
+            st.number_input(
+                "Max. Ontlaadvermogen (kW)", value=None, step=0.1, key=f"bat_discharge_{bid}",
+                placeholder="bijv. 3.68"
+            )
             st.slider("Laadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_c_{bid}")
             st.slider("Ontlaadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_d_{bid}")
 
@@ -673,10 +678,18 @@ st.sidebar.divider()
 
 can_simulate = False
 meter_data_ready = bool(uploaded_meter) if meter_source == "Bestand upload" else st.session_state.get("smp_meter_df") is not None
+missing_battery_power = any(
+    st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)"
+    and (st.session_state.get(f"bat_charge_{bid}") is None or st.session_state.get(f"bat_discharge_{bid}") is None)
+    for bid in st.session_state.get("battery_ids", [])
+)
 if meter_data_ready:
     can_simulate = True
     if not ENTSOE_API_KEY:
         st.sidebar.error("⚠️ Geen API Key geconfigureerd.")
+        can_simulate = False
+    if missing_battery_power:
+        st.sidebar.error("⚠️ Vul max. laad- en ontlaadvermogen in voor handmatige batterijen.")
         can_simulate = False
 
 def _run_simulation(meter_df):
@@ -804,6 +817,7 @@ else:
 
 st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://www.linkedin.com/in/jortgroen/)\n[Brecht Goethals](https://github.com/Brecht1949)")
 st.sidebar.caption("Technische Universiteit Delft")
+st.sidebar.caption("[Documentatie](https://github.com/GreenYoghurt/BattWatt)")
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 
