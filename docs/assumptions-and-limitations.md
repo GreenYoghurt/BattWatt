@@ -62,8 +62,12 @@ the flexible (per-kWh) costs scale correctly with the amount of data provided. S
 
 ## Battery physics are simplified
 
-- **Constant round-trip efficiency** (default 98% charge / 98% discharge), with no dependence on
-  temperature, charge rate, or state of charge.
+- **Constant round-trip efficiency**, configured as a single "netto rendement gehele
+  installatie" figure (default 90%, used by every preset battery as well as the default for a
+  custom one) rather than separate charge/discharge numbers. `Battery` splits it evenly across
+  the two legs internally (`sqrt(efficiency)` each way, so the two legs' product reproduces the
+  configured round-trip value), but there's no dependence on temperature, charge rate, or state
+  of charge.
 - **No calendar or cycle aging.** Capacity does not degrade over the simulated period, however
   long it is.
 - **No minimum state of charge / depth-of-discharge floor**, and no replacement-cost or warranty

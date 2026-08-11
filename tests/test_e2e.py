@@ -118,10 +118,11 @@ def test_battwatt_e2e_simulation():
 
     # Financial Regression (Hardcoded based on net_metering=False)
     # Baseline uses per-interval netted flows (not raw verbruik/teruglevering) so
-    # savings reflect only the battery contribution. Was 443.30 before the fix.
+    # savings reflect only the battery contribution. Was 412.55/354.40 before the
+    # battery efficiency default changed from 96.04% to 90% round-trip.
     expected_baseline_cost = 430.73
-    expected_simulated_cost = 412.55
-    expected_cycles = 354.40
+    expected_simulated_cost = 433.64
+    expected_cycles = 354.07
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
@@ -152,7 +153,7 @@ def test_e2e_slimme_meter_portal_format():
     _assert_energy_conservation(result)
 
     expected_baseline_cost = -0.60
-    expected_simulated_cost = 0.49
+    expected_simulated_cost = 0.69
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
 
@@ -165,6 +166,6 @@ def test_e2e_single_column_format():
     _assert_energy_conservation(result)
 
     expected_baseline_cost = 102.22
-    expected_simulated_cost = 92.27
+    expected_simulated_cost = 96.00
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05

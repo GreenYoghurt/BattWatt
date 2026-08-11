@@ -1,10 +1,18 @@
+import math
+
+
 class Battery:
-    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency_charging=0.98, efficiency_discharging=0.98):
+    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency=0.90):
         self.capacity_kwh = capacity_kwh
         self.max_charge_kw = max_charge_kw
         self.max_discharge_kw = max_discharge_kw
-        self.efficiency_charging = efficiency_charging
-        self.efficiency_discharging = efficiency_discharging
+        self.efficiency = efficiency  # netto rendement gehele installatie (round-trip)
+        # Split the round-trip efficiency evenly across charge and discharge legs
+        # (charge_leg * discharge_leg == efficiency) so downstream code can keep
+        # applying a loss on each side of the SoC, as the physical battery does.
+        leg_efficiency = math.sqrt(efficiency)
+        self.efficiency_charging = leg_efficiency
+        self.efficiency_discharging = leg_efficiency
         self.soc_kwh = 0  # State of Charge in kWh
         self.total_charged_kwh = 0.0
         self.total_discharged_kwh = 0.0

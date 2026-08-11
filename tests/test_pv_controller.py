@@ -63,9 +63,10 @@ def test_battwatt_pv_controller_e2e():
            result.delta_soc_kwh >= -1e-6
 
     # 5. FINANCIAL REGRESSION
-    # Baseline uses per-interval netted flows. Was 254.83 before the fix.
+    # Baseline uses per-interval netted flows. Was 176.88 before the battery
+    # efficiency default changed from 96.04% to 90% round-trip.
     expected_baseline_cost = 251.89
-    expected_simulated_cost = 176.88
+    expected_simulated_cost = 186.87
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
