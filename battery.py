@@ -2,7 +2,7 @@ import math
 
 
 class Battery:
-    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency=0.90):
+    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency=0.90, standby_power_w=10.0):
         self.capacity_kwh = capacity_kwh
         self.max_charge_kw = max_charge_kw
         self.max_discharge_kw = max_discharge_kw
@@ -13,6 +13,7 @@ class Battery:
         leg_efficiency = math.sqrt(efficiency)
         self.efficiency_charging = leg_efficiency
         self.efficiency_discharging = leg_efficiency
+        self.standby_power_w = standby_power_w  # continuous idle draw of the inverter/BMS
         self.soc_kwh = 0  # State of Charge in kWh
         self.total_charged_kwh = 0.0
         self.total_discharged_kwh = 0.0
@@ -60,6 +61,12 @@ class Battery:
         return self.soc_kwh
     
     def step(self, production, consumption, duration_hours=0.25):
+        # The battery system's own standby draw (inverter/BMS) is treated like
+        # any other household load: covered by PV first, then by the battery
+        # itself, and only then by the grid.
+        standby_energy_kwh = self.standby_power_w / 1000 * duration_hours
+        consumption = consumption + standby_energy_kwh
+
         net_energy = production - consumption  # kWh
 
         # Excess production, charge the battery
@@ -78,7 +85,7 @@ class Battery:
 
         return production, consumption  # after battery adjustment (to grid, from grid)
 
-def get_battery(name: str, efficiency: float = None) -> Battery:
+def get_battery(name: str, efficiency: float = None, standby_power_w: float = None) -> Battery:
     specs = {
         "Bliq_5kwh": dict(capacity_kwh=5, max_charge_kw=3.68, max_discharge_kw=3.68),
         "Bliq_10kwh": dict(capacity_kwh=10, max_charge_kw=3.68, max_discharge_kw=3.68),
@@ -90,6 +97,9 @@ def get_battery(name: str, efficiency: float = None) -> Battery:
     spec = specs.get(name)
     if spec is None:
         return None
+    overrides = {}
     if efficiency is not None:
-        return Battery(**spec, efficiency=efficiency)
-    return Battery(**spec)
+        overrides["efficiency"] = efficiency
+    if standby_power_w is not None:
+        overrides["standby_power_w"] = standby_power_w
+    return Battery(**spec, **overrides)

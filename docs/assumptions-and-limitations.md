@@ -70,6 +70,10 @@ the flexible (per-kWh) costs scale correctly with the amount of data provided. S
   of charge.
 - **No calendar or cycle aging.** Capacity does not degrade over the simulated period, however
   long it is.
+- **Constant standby draw** (default 10 W) models the inverter/BMS's own idle consumption. It's
+  added to household consumption every interval — covered by PV first, then by the battery
+  itself, then by the grid — the same priority order as any other load. It is not itself
+  affected by the round-trip efficiency above.
 - **No minimum state of charge / depth-of-discharge floor**, and no replacement-cost or warranty
   economics — a battery can be cycled between 0% and 100% indefinitely at no cost beyond the
   MPC's optional degradation penalty (see below).

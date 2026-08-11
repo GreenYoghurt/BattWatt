@@ -13,7 +13,8 @@ def test_battery_energy_conservation():
         capacity_kwh=cap_kwh,
         max_charge_kw=5.0,
         max_discharge_kw=5.0,
-        efficiency=round_trip_efficiency
+        efficiency=round_trip_efficiency,
+        standby_power_w=0.0
     )
     
     # Create 24 hours of synthetic data (15-min intervals)
@@ -71,7 +72,7 @@ def test_simulation_conservation():
     but verifies that (Sum Prod - Sum Cons) >= (Sum Grid Prod - Sum Grid Cons) + Delta SoC
     """
     cap_kwh = 5.0
-    bat = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=0.9025)
+    bat = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=0.9025, standby_power_w=0.0)
     
     # 100 random intervals of production and consumption
     np.random.seed(42)
@@ -102,7 +103,7 @@ def test_simulation_conservation():
     assert losses >= -1e-10, f"Energy created! Losses: {losses}"
     
     # Test perfect efficiency case
-    bat_perfect = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=1.0)
+    bat_perfect = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=1.0, standby_power_w=0.0)
     grid_prod_sum = 0
     grid_cons_sum = 0
     for p, c in zip(prod, cons):
