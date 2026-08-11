@@ -78,13 +78,18 @@ class Battery:
 
         return production, consumption  # after battery adjustment (to grid, from grid)
 
-def get_battery(name: str) -> Battery:
-    batteries = {
-        "Bliq_5kwh": Battery(capacity_kwh=5, max_charge_kw=3.68, max_discharge_kw=3.68),
-        "Bliq_10kwh": Battery(capacity_kwh=10, max_charge_kw=3.68, max_discharge_kw=3.68),
-        "Bliq_10kwh_fast": Battery(capacity_kwh=10, max_charge_kw=5, max_discharge_kw=5),
-        "Bliq_15kwh": Battery(capacity_kwh=15, max_charge_kw=5, max_discharge_kw=5),
-        "Bliq_20kwh": Battery(capacity_kwh=20, max_charge_kw=8, max_discharge_kw=8),
-        "Bliq_25kwh": Battery(capacity_kwh=25, max_charge_kw=8, max_discharge_kw=8),
+def get_battery(name: str, efficiency: float = None) -> Battery:
+    specs = {
+        "Bliq_5kwh": dict(capacity_kwh=5, max_charge_kw=3.68, max_discharge_kw=3.68),
+        "Bliq_10kwh": dict(capacity_kwh=10, max_charge_kw=3.68, max_discharge_kw=3.68),
+        "Bliq_10kwh_fast": dict(capacity_kwh=10, max_charge_kw=5, max_discharge_kw=5),
+        "Bliq_15kwh": dict(capacity_kwh=15, max_charge_kw=5, max_discharge_kw=5),
+        "Bliq_20kwh": dict(capacity_kwh=20, max_charge_kw=8, max_discharge_kw=8),
+        "Bliq_25kwh": dict(capacity_kwh=25, max_charge_kw=8, max_discharge_kw=8),
     }
-    return batteries.get(name, None)
+    spec = specs.get(name)
+    if spec is None:
+        return None
+    if efficiency is not None:
+        return Battery(**spec, efficiency=efficiency)
+    return Battery(**spec)

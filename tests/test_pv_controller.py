@@ -26,7 +26,9 @@ def test_battwatt_pv_controller_e2e():
     merged_df.set_index("timestamp", drop=False, inplace=True)
 
     # 2. RUN SIMULATION
-    bat = get_battery("Bliq_5kwh")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    bat = get_battery("Bliq_5kwh", efficiency=0.9604)
     controller = Controller_PV(bat)
     simulator = Simulator(bat, controller)
     result = simulator.run(merged_df)
@@ -63,10 +65,9 @@ def test_battwatt_pv_controller_e2e():
            result.delta_soc_kwh >= -1e-6
 
     # 5. FINANCIAL REGRESSION
-    # Baseline uses per-interval netted flows. Was 176.88 before the battery
-    # efficiency default changed from 96.04% to 90% round-trip.
+    # Baseline uses per-interval netted flows. Was 254.83 before the fix.
     expected_baseline_cost = 251.89
-    expected_simulated_cost = 186.87
+    expected_simulated_cost = 176.88
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05

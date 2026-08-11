@@ -28,7 +28,9 @@ def test_mpc_e2e_simulation():
 
     # 2. SETUP BATTERY & CONTROLLER
     # Using the same configuration as example_mpc.py
-    battery = get_battery("Bliq_10kwh_fast")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    battery = get_battery("Bliq_10kwh_fast", efficiency=0.9604)
     provider = get_providers()["Zonneplan"]
     # Zonneplan default is net_metering=False in get_providers()
     
@@ -73,11 +75,10 @@ def test_mpc_e2e_simulation():
     savings = cost_no_battery - cost_with_mpc
 
     # Financial Regression (Hardcoded based on Zonneplan with Bliq_10kwh_fast)
-    # Baseline uses per-interval netted flows. Was 96.78/207.15 before the battery
-    # efficiency default changed from 96.04% to 90% round-trip.
+    # Baseline uses per-interval netted flows. Was 443.28 before the fix.
     expected_cost_no_battery = 430.73
-    expected_cost_with_mpc = 121.98
-    expected_mpc_cycles = 189.45
+    expected_cost_with_mpc = 96.78
+    expected_mpc_cycles = 207.15
     
     assert abs(cost_no_battery - expected_cost_no_battery) < 0.05
     assert abs(cost_with_mpc - expected_cost_with_mpc) < 0.05
