@@ -2,6 +2,21 @@
 
 BattWatt is a Python-based tool designed to evaluate and simulate household energy consumption, solar PV production, and battery storage performance using Dutch day-ahead energy prices. It allows users to estimate potential savings by optimizing battery usage based on price fluctuations and solar availability.
 
+## Documentation
+
+This README covers installation and day-to-day usage. For a deeper explanation of how the
+numbers are actually produced, see:
+
+- **[Cost calculation](docs/cost-calculation.md)** — the exact fixed/flexible cost formulas,
+  VAT and energy tax handling, and the net-metering vs. gross-accounting distinction.
+- **[Optimization & control](docs/optimization-and-control.md)** — how the PV, price-quantile,
+  and MPC controllers each decide when to charge/discharge, including the MPC's full
+  optimization formulation.
+- **[Assumptions & known limitations](docs/assumptions-and-limitations.md)** — what the model
+  simplifies or doesn't capture at all, including why **a battery can never "solve" PV
+  curtailment** in this tool.
+- **[CLAUDE.md](CLAUDE.md)** — architecture and module layout, for anyone extending the code.
+
 ## Features
 
 - **Interactive Web App**: User-friendly Streamlit interface for easy data upload, multi-battery comparison, and simulation. Runs data in-memory only — nothing is stored (see the privacy notice in the app header).
@@ -18,7 +33,7 @@ BattWatt is a Python-based tool designed to evaluate and simulate household ener
   - **MPC Controller**: Optimization-based (Model Predictive Control) using `Pyomo` and the `HiGHS` solver (via `highspy`) for cost-optimal behavior, with plan caching for performance.
 - **Financial Analysis**: Comprehensive billing engine accounting for:
   - Dutch energy taxes and VAT (21%).
-  - Net Metering (Salderingsregeling).
+  - Net Metering (Salderingsregeling) — supported by the billing engine, not currently exposed in the web app (see [limitations](docs/assumptions-and-limitations.md)).
   - Custom provider fees (Subscription, Buying/Selling mark-ups).
   - Itemised cost-breakdown table comparing baseline vs. each simulated battery.
 - **Visualization**: Interactive Plotly charts (energy flow, SoC, market price) and a visual progress bar for long-running simulations.
@@ -66,3 +81,6 @@ Run the full test suite — covering physical energy conservation, financial E2E
 ```powershell
 python -m pytest -s tests/
 ```
+
+## License
+MIT — see [LICENSE](LICENSE).
