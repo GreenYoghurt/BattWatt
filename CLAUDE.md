@@ -82,3 +82,7 @@ After simulation, `Simulator` adds `adjusted_consumption`, `adjusted_production`
 ### Controllers Package vs. Top-Level Files
 
 The active controllers live in `controllers/` (the package). Top-level `controller_PV.py` and `controller_price.py` are legacy files. `example.py`/`example_mpc.py` import directly from the specific submodule (`from controllers.controller_MPC import Controller_MPC`); `app.py` imports from the package root (`from controllers import Controller_PV, Controller_MPC`), which re-exports the same classes via `controllers/__init__.py`.
+
+### User-Facing Docs
+
+`docs/cost-calculation.md`, `docs/optimization-and-control.md`, and `docs/assumptions-and-limitations.md` explain the billing formulas, controller behavior, and known modeling gaps (e.g. PV curtailment isn't representable at all — see that doc) in human-readable form. When a change here alters a formula, a controller's decision logic, or a modeling assumption, update the matching doc page too.
