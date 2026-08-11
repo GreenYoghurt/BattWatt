@@ -381,7 +381,7 @@ except Exception:
 st.title("🔋 BattWatt: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
-Upload je P1-metergegevens om te beginnen.
+Upload je **kwartiergegevens** (P1-meterdata per 15 minuten) om te beginnen.
 
 Deze tool gaat uit van een **dynamisch energiecontract** en houdt geen rekening met de
 salderingsregeling — de situatie die vanaf 2027 voor iedereen de werkelijkheid wordt.
@@ -438,13 +438,24 @@ st.sidebar.divider()
 
 # 1. Meter Data
 st.sidebar.subheader("📂 Meter Data")
-meter_source = st.sidebar.radio("Databron", ["Bestand upload", "SlimmeMeterPortal API"], horizontal=True)
+meter_source = st.sidebar.radio(
+    "Databron",
+    ["Bestand upload", "SlimmeMeterPortal API"],
+    captions=[
+        "Upload zelf een bestand met kwartiergegevens, geëxporteerd uit je meter-app of leveranciersportaal.",
+        "Haal je kwartiergegevens automatisch op via [SlimmeMeterPortal.nl](https://www.slimmemeterportal.nl/), "
+        "een dienst die je slimme meter uitleest (abonnement vereist).",
+    ],
+    horizontal=True,
+)
 
 uploaded_meter = None
 custom_mapping = None
 
 if meter_source == "Bestand upload":
-    uploaded_meter = st.sidebar.file_uploader("Upload Meter Data (CSV of Excel)", type=["csv", "xlsx"])
+    uploaded_meter = st.sidebar.file_uploader(
+        "Upload Meter Data — kwartiergegevens (CSV of Excel)", type=["csv", "xlsx"]
+    )
 
     with st.sidebar.expander("ℹ️ Ondersteunde Formaten"):
         st.markdown("""
@@ -595,8 +606,14 @@ for bid in list(st.session_state.battery_ids):
 
         if st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)":
             st.number_input("Capaciteit (kWh)", value=10.0, step=0.5, key=f"bat_cap_{bid}")
-            st.number_input("Max. Laadvermogen (kW)", value=3.68, step=0.1, key=f"bat_charge_{bid}")
-            st.number_input("Max. Ontlaadvermogen (kW)", value=3.68, step=0.1, key=f"bat_discharge_{bid}")
+            st.number_input(
+                "Max. Laadvermogen (kW)", value=None, step=0.1, key=f"bat_charge_{bid}",
+                placeholder="bijv. 3.68"
+            )
+            st.number_input(
+                "Max. Ontlaadvermogen (kW)", value=None, step=0.1, key=f"bat_discharge_{bid}",
+                placeholder="bijv. 3.68"
+            )
             st.slider("Laadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_c_{bid}")
             st.slider("Ontlaadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_d_{bid}")
 
@@ -613,7 +630,9 @@ st.sidebar.divider()
 # 3. Provider
 st.sidebar.subheader("💶 Energieleverancier")
 with st.sidebar.expander("Provider Details", expanded=True):
-    custom_name = st.text_input("Naam", value="Mijn Leverancier")
+    custom_name = st.text_input(
+        "Naam energieleverancier (voor eigen documentatie)", value="Mijn Leverancier"
+    )
     custom_sub = st.number_input(
         "Vaste leveringskosten (€/jaar)", value=75.0, step=1.0,
         help="Jaarlijks vast bedrag dat je leverancier rekent bovenop de variabele energiekosten."
@@ -659,10 +678,18 @@ st.sidebar.divider()
 
 can_simulate = False
 meter_data_ready = bool(uploaded_meter) if meter_source == "Bestand upload" else st.session_state.get("smp_meter_df") is not None
+missing_battery_power = any(
+    st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)"
+    and (st.session_state.get(f"bat_charge_{bid}") is None or st.session_state.get(f"bat_discharge_{bid}") is None)
+    for bid in st.session_state.get("battery_ids", [])
+)
 if meter_data_ready:
     can_simulate = True
     if not ENTSOE_API_KEY:
         st.sidebar.error("⚠️ Geen API Key geconfigureerd.")
+        can_simulate = False
+    if missing_battery_power:
+        st.sidebar.error("⚠️ Vul max. laad- en ontlaadvermogen in voor handmatige batterijen.")
         can_simulate = False
 
 def _run_simulation(meter_df):
@@ -748,6 +775,7 @@ def _run_simulation(meter_df):
             'breakdown_baseline': breakdown_baseline,
             'all_results': all_results,
             'strategy': strategy_map[selected_strategy],
+            'provider_name': provider.name,
         }
 
 
@@ -789,6 +817,7 @@ else:
 
 st.sidebar.markdown("**Ontwikkeld door:**  \n[Jort Groen](https://www.linkedin.com/in/jortgroen/)\n[Brecht Goethals](https://github.com/Brecht1949)")
 st.sidebar.caption("Technische Universiteit Delft")
+st.sidebar.caption("[Documentatie](https://github.com/GreenYoghurt/BattWatt)")
 
 # ── Main area ─────────────────────────────────────────────────────────────────
 
@@ -811,6 +840,8 @@ elif 'simulation_result' in st.session_state:
     strategy = res_data['strategy']
 
     st.header("Resultaten Overzicht")
+    if res_data.get('provider_name'):
+        st.caption(f"📄 Energieleverancier: **{res_data['provider_name']}**")
     include_fixed = st.checkbox(
         "Vaste kosten meenemen", value=True,
         help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken."
@@ -960,16 +991,16 @@ elif 'simulation_result' in st.session_state:
             st.dataframe(all_results[0]['result'].df.head(100))
 
 elif not uploaded_meter:
-    st.info("👈 Upload je P1-metergegevens in de zijbalk om de berekening te starten.")
+    st.info("👈 Upload je kwartiergegevens (P1-metergegevens per 15 minuten) in de zijbalk om de berekening te starten.")
     st.markdown("""
 ### Wat doet deze app?
 Deze app rekent uit hoeveel geld je zou besparen met een thuisbatterij. Dat doet hij met
-jouw eigen stroomgegevens (hoeveel je verbruikt en hoeveel zon je opwekt) en de actuele
-stroomprijzen.
+jouw eigen stroomgegevens op kwartierniveau (hoeveel je per 15 minuten verbruikt en hoeveel
+zon je opwekt) en de actuele stroomprijzen.
 
 **Zo werkt het:**
-1. **Upload je stroomgegevens** — een bestand van je slimme meter, of we halen ze automatisch
-   voor je op.
+1. **Upload je kwartiergegevens** — een bestand van je slimme meter met data per 15 minuten,
+   of we halen ze automatisch voor je op via SlimmeMeterPortal.nl.
 2. **Kies een batterij** — een standaardmodel, of vul zelf de grootte in. Je mag ook meerdere
    batterijen tegelijk vergelijken.
 3. **Vul je energieleverancier in** — wat je betaalt per maand en per kWh stroom.
