@@ -124,8 +124,7 @@ def _battery_from_id(bid):
             capacity_kwh=st.session_state.get(f"bat_cap_{bid}", 10.0),
             max_charge_kw=st.session_state.get(f"bat_charge_{bid}", 3.68),
             max_discharge_kw=st.session_state.get(f"bat_discharge_{bid}", 3.68),
-            efficiency_charging=st.session_state.get(f"bat_eff_c_{bid}", 98) / 100,
-            efficiency_discharging=st.session_state.get(f"bat_eff_d_{bid}", 98) / 100,
+            efficiency=st.session_state.get(f"bat_eff_{bid}", 90) / 100,
         )
     return get_battery(_battery_display_to_key[preset])
 
@@ -614,8 +613,10 @@ for bid in list(st.session_state.battery_ids):
                 "Max. Ontlaadvermogen (kW)", value=None, step=0.1, key=f"bat_discharge_{bid}",
                 placeholder="bijv. 3.68"
             )
-            st.slider("Laadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_c_{bid}")
-            st.slider("Ontlaadefficiëntie (%)", 80, 100, 98, key=f"bat_eff_d_{bid}")
+            st.slider(
+                "Netto rendement gehele installatie (%)", 80, 100, 90, key=f"bat_eff_{bid}",
+                help="Rendement van de volledige installatie over een volledige laad- en ontlaadcyclus (round-trip)."
+            )
 
 if st.sidebar.button("➕ Batterij toevoegen", use_container_width=True):
     new_id = st.session_state.battery_counter

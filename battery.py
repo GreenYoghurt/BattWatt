@@ -1,10 +1,18 @@
+import math
+
+
 class Battery:
-    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency_charging=0.98, efficiency_discharging=0.98):
+    def __init__(self, capacity_kwh, max_charge_kw, max_discharge_kw, efficiency=0.90):
         self.capacity_kwh = capacity_kwh
         self.max_charge_kw = max_charge_kw
         self.max_discharge_kw = max_discharge_kw
-        self.efficiency_charging = efficiency_charging
-        self.efficiency_discharging = efficiency_discharging
+        self.efficiency = efficiency  # netto rendement gehele installatie (round-trip)
+        # Split the round-trip efficiency evenly across charge and discharge legs
+        # (charge_leg * discharge_leg == efficiency) so downstream code can keep
+        # applying a loss on each side of the SoC, as the physical battery does.
+        leg_efficiency = math.sqrt(efficiency)
+        self.efficiency_charging = leg_efficiency
+        self.efficiency_discharging = leg_efficiency
         self.soc_kwh = 0  # State of Charge in kWh
         self.total_charged_kwh = 0.0
         self.total_discharged_kwh = 0.0
@@ -70,13 +78,18 @@ class Battery:
 
         return production, consumption  # after battery adjustment (to grid, from grid)
 
-def get_battery(name: str) -> Battery:
-    batteries = {
-        "Bliq_5kwh": Battery(capacity_kwh=5, max_charge_kw=3.68, max_discharge_kw=3.68),
-        "Bliq_10kwh": Battery(capacity_kwh=10, max_charge_kw=3.68, max_discharge_kw=3.68),
-        "Bliq_10kwh_fast": Battery(capacity_kwh=10, max_charge_kw=5, max_discharge_kw=5),
-        "Bliq_15kwh": Battery(capacity_kwh=15, max_charge_kw=5, max_discharge_kw=5),
-        "Bliq_20kwh": Battery(capacity_kwh=20, max_charge_kw=8, max_discharge_kw=8),
-        "Bliq_25kwh": Battery(capacity_kwh=25, max_charge_kw=8, max_discharge_kw=8),
+def get_battery(name: str, efficiency: float = None) -> Battery:
+    specs = {
+        "Bliq_5kwh": dict(capacity_kwh=5, max_charge_kw=3.68, max_discharge_kw=3.68),
+        "Bliq_10kwh": dict(capacity_kwh=10, max_charge_kw=3.68, max_discharge_kw=3.68),
+        "Bliq_10kwh_fast": dict(capacity_kwh=10, max_charge_kw=5, max_discharge_kw=5),
+        "Bliq_15kwh": dict(capacity_kwh=15, max_charge_kw=5, max_discharge_kw=5),
+        "Bliq_20kwh": dict(capacity_kwh=20, max_charge_kw=8, max_discharge_kw=8),
+        "Bliq_25kwh": dict(capacity_kwh=25, max_charge_kw=8, max_discharge_kw=8),
     }
-    return batteries.get(name, None)
+    spec = specs.get(name)
+    if spec is None:
+        return None
+    if efficiency is not None:
+        return Battery(**spec, efficiency=efficiency)
+    return Battery(**spec)

@@ -28,7 +28,9 @@ def _run_pipeline(meter_df: pd.DataFrame):
     merged_df = merge_data(meter_df, price_df, tolerance="15min")
     merged_df.set_index("timestamp", drop=False, inplace=True)
 
-    bat = get_battery("Bliq_5kwh")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    bat = get_battery("Bliq_5kwh", efficiency=0.9604)
     controller = Controller_price(bat, merged_df)
     simulator = Simulator(bat, controller)
     result = simulator.run(merged_df)
@@ -74,7 +76,9 @@ def test_battwatt_e2e_simulation():
     merged_df.set_index("timestamp", drop=False, inplace=True)
 
     # 2. RUN SIMULATION
-    bat = get_battery("Bliq_5kwh")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    bat = get_battery("Bliq_5kwh", efficiency=0.9604)
     controller = Controller_price(bat, merged_df)
     simulator = Simulator(bat, controller)
     result = simulator.run(merged_df)

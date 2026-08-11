@@ -28,7 +28,9 @@ def test_mpc_e2e_simulation():
 
     # 2. SETUP BATTERY & CONTROLLER
     # Using the same configuration as example_mpc.py
-    battery = get_battery("Bliq_10kwh_fast")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    battery = get_battery("Bliq_10kwh_fast", efficiency=0.9604)
     provider = get_providers()["Zonneplan"]
     # Zonneplan default is net_metering=False in get_providers()
     

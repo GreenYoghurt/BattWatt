@@ -87,9 +87,9 @@ def test_sequential_runs_are_order_independent(merged_df, provider):
     def fresh_batteries():
         return (
             Battery(5.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                    efficiency_charging=1.0, efficiency_discharging=1.0),
+                    efficiency=1.0),
             Battery(10.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                    efficiency_charging=1.0, efficiency_discharging=1.0),
+                    efficiency=1.0),
         )
 
     bat_a1, bat_b1 = fresh_batteries()
@@ -110,7 +110,7 @@ def test_source_dataframe_not_mutated(merged_df, provider):
     teruglevering_before = merged_df["teruglevering"].copy()
 
     bat = Battery(5.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                  efficiency_charging=1.0, efficiency_discharging=1.0)
+                  efficiency=1.0)
     _run_pv(merged_df, bat, provider)
 
     pd.testing.assert_series_equal(merged_df["verbruik"], verbruik_before)
@@ -128,7 +128,7 @@ def test_larger_battery_saves_at_least_as_much(merged_df, provider):
     savings = []
     for cap in capacities:
         bat = Battery(cap, max_charge_kw=3.0, max_discharge_kw=3.0,
-                      efficiency_charging=1.0, efficiency_discharging=1.0)
+                      efficiency=1.0)
         _, cost = _run_pv(merged_df, bat, provider)
         savings.append(cost_baseline - cost)
 
@@ -147,7 +147,7 @@ def test_baseline_unchanged_after_battery_runs(merged_df, provider):
 
     for cap in [2.0, 5.0, 10.0]:
         bat = Battery(cap, max_charge_kw=3.0, max_discharge_kw=3.0,
-                      efficiency_charging=1.0, efficiency_discharging=1.0)
+                      efficiency=1.0)
         _run_pv(merged_df, bat, provider)
 
     cost_after = billing.calculate_bill(baseline)
@@ -161,7 +161,7 @@ def test_pv_battery_always_reduces_cost(merged_df, provider):
 
     for cap in [2.0, 5.0, 10.0, 15.0]:
         bat = Battery(cap, max_charge_kw=3.68, max_discharge_kw=3.68,
-                      efficiency_charging=0.98, efficiency_discharging=0.98)
+                      efficiency=0.9604)
         _, cost = _run_pv(merged_df, bat, provider)
         assert cost <= cost_baseline + 1e-6, (
             f"{cap} kWh battery increased cost: {cost:.4f} > baseline {cost_baseline:.4f}"
@@ -172,9 +172,9 @@ def test_energy_conservation_per_battery(merged_df, provider):
     """Energy conservation must hold independently for each battery simulation."""
     configs = [
         Battery(5.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                efficiency_charging=0.95, efficiency_discharging=0.95),
+                efficiency=0.9025),
         Battery(10.0, max_charge_kw=5.0, max_discharge_kw=5.0,
-                efficiency_charging=0.98, efficiency_discharging=0.98),
+                efficiency=0.9604),
     ]
     for bat in configs:
         result, _ = _run_pv(merged_df, bat, provider)
@@ -207,7 +207,7 @@ def test_breakdown_contains_all_required_keys(merged_df, provider):
         _run_pv(
             merged_df,
             Battery(5.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                    efficiency_charging=1.0, efficiency_discharging=1.0),
+                    efficiency=1.0),
             provider,
         )[0],
     ]:
@@ -220,7 +220,7 @@ def test_breakdown_total_matches_calculate_bill(merged_df, provider):
     """breakdown['total'] must equal calculate_bill() to floating-point precision."""
     billing = BillingEngine(provider)
     bat = Battery(5.0, max_charge_kw=3.0, max_discharge_kw=3.0,
-                  efficiency_charging=1.0, efficiency_discharging=1.0)
+                  efficiency=1.0)
     result, bill = _run_pv(merged_df, bat, provider)
 
     breakdown = billing.calculate_bill_breakdown(result)

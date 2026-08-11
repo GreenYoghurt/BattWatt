@@ -5,15 +5,15 @@ from battery import Battery
 from controllers.controller_PV import Controller_PV
 
 def test_battery_energy_conservation():
-    # Setup a battery with some losses (90% efficient charging and discharging)
+    # Setup a battery with some losses (90% efficient charging and discharging,
+    # i.e. a round-trip "netto rendement" of 0.9 * 0.9 = 0.81)
     cap_kwh = 10.0
-    efficiency = 0.90
+    round_trip_efficiency = 0.81
     bat = Battery(
-        capacity_kwh=cap_kwh, 
-        max_charge_kw=5.0, 
-        max_discharge_kw=5.0, 
-        efficiency_charging=efficiency, 
-        efficiency_discharging=efficiency
+        capacity_kwh=cap_kwh,
+        max_charge_kw=5.0,
+        max_discharge_kw=5.0,
+        efficiency=round_trip_efficiency
     )
     
     # Create 24 hours of synthetic data (15-min intervals)
@@ -71,7 +71,7 @@ def test_simulation_conservation():
     but verifies that (Sum Prod - Sum Cons) >= (Sum Grid Prod - Sum Grid Cons) + Delta SoC
     """
     cap_kwh = 5.0
-    bat = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency_charging=0.95, efficiency_discharging=0.95)
+    bat = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=0.9025)
     
     # 100 random intervals of production and consumption
     np.random.seed(42)
@@ -102,7 +102,7 @@ def test_simulation_conservation():
     assert losses >= -1e-10, f"Energy created! Losses: {losses}"
     
     # Test perfect efficiency case
-    bat_perfect = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency_charging=1.0, efficiency_discharging=1.0)
+    bat_perfect = Battery(capacity_kwh=cap_kwh, max_charge_kw=3.0, max_discharge_kw=3.0, efficiency=1.0)
     grid_prod_sum = 0
     grid_cons_sum = 0
     for p, c in zip(prod, cons):

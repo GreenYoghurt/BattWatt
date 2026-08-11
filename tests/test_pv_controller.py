@@ -26,7 +26,9 @@ def test_battwatt_pv_controller_e2e():
     merged_df.set_index("timestamp", drop=False, inplace=True)
 
     # 2. RUN SIMULATION
-    bat = get_battery("Bliq_5kwh")
+    # Pin efficiency explicitly so this regression test doesn't drift if the
+    # Battery class's default efficiency changes.
+    bat = get_battery("Bliq_5kwh", efficiency=0.9604)
     controller = Controller_PV(bat)
     simulator = Simulator(bat, controller)
     result = simulator.run(merged_df)
