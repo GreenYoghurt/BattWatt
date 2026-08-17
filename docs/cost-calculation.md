@@ -94,6 +94,43 @@ the net-metering scenario. `Provider` also accepts a `selling_fee_net_metering` 
 not read anywhere in the cost formulas yet — it's reserved for a possible future
 net-metering-specific selling-fee rule.
 
+## Vast contract (fixed contract)
+
+`Provider.contract_type` can be `"dynamic"` (everything above) or `"fixed"`. Under a fixed
+contract the flexible costs are computed by `Provider.calculate_fixed_costs_breakdown()` instead
+of `calculate_flexible_costs_breakdown()` — `Provider.calculate_costs_breakdown()` /
+`calculate_costs_total()` dispatch to the right one based on `contract_type`, so `billing.py`
+never branches on it itself.
+
+- **Normaaltarief / daltarief** — every 15-minute interval of consumption is priced at
+  `Provider.normaal_tarief` or `Provider.dal_tarief` depending on when it falls, via
+  `get_tariff_period(dt)`:
+  - **Dal**: weekdays 23:00–07:00, plus the entire weekend (Saturday and Sunday, all day).
+  - **Normaal**: weekdays 07:00–23:00.
+- **Terugleververgoeding** — every exported kWh is paid at a single flat
+  `Provider.terugleververgoeding` rate, regardless of when it was exported. There is **no net
+  metering (saldering)** for fixed contracts in this tool — feed-in never offsets the
+  normaal/dal consumption total, it's only ever paid out separately.
+- **Tariffs are all-in**: `normaal_tarief`, `dal_tarief`, and `terugleververgoeding` are entered
+  VAT-inclusive and already include energiebelasting. Unlike the dynamic contract, there is no
+  separate `energiebelasting` line in the fixed-contract cost breakdown — it's baked into the two
+  per-kWh rates.
+
+```
+flexible_costs = normaal_kwh * normaal_tarief + dal_kwh * dal_tarief
+                − total_feed_in_kwh * terugleververgoeding
+
+total_bill = fixed_costs + flexible_costs
+```
+
+Fixed annual costs (abonnementskosten, netbeheerskosten, belastingvermindering) are computed
+identically for both contract types — `Provider.get_fixed_costs()` is contract-type-agnostic.
+
+Because "Kosten Optimaal (MPC)" optimizes battery charge/discharge against the dynamic day-ahead
+price, that price signal no longer reflects what the customer actually pays under a fixed
+contract. `app.py` therefore only offers "PV Prioriteit" as a strategy when "Vast contract" is
+selected.
+
 ## How "savings" are computed
 
 The baseline bill uses the meter data exactly as recorded (no battery): `adjusted_consumption`
