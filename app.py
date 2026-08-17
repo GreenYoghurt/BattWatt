@@ -131,31 +131,52 @@ def _battery_from_id(bid):
 
 # ── Unified breakdown comparison table ────────────────────────────────────────
 
+def _breakdown_row_defs(bd):
+    """Returns (label, key, is_credit, vol_key, is_fixed, tarief_str) row tuples for the
+    Kostenopbouw tables, tailored to the provider's contract type."""
+    def avg_per_kwh(cost_key, vol_key):
+        vol = bd[vol_key]
+        return bd[cost_key] / vol if vol else 0.0
+
+    fixed_rows = [
+        ("Abonnementskosten",    "abonnementskosten",    False, None, True,
+         f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
+        ("Netbeheerskosten",     "netbeheerskosten",      False, None, True,
+         f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
+        ("Belastingvermindering", "belastingvermindering", True,  None, True,
+         f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
+    ]
+
+    if bd.get("contract_type") == "fixed":
+        variable_rows = [
+            ("Normaaltarief",        "normaal_kosten",          False, "normaal_kwh",        False,
+             f"€ {bd['tarief_normaal_tarief']:.4f}/kWh"),
+            ("Daltarief",            "dal_kosten",              False, "dal_kwh",            False,
+             f"€ {bd['tarief_dal_tarief']:.4f}/kWh"),
+            ("Terugleververgoeding", "teruglevering_opbrengst", True,  "total_feed_in_kwh",  False,
+             f"€ {bd['tarief_terugleververgoeding']:.4f}/kWh"),
+        ]
+    else:
+        variable_rows = [
+            ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
+             f"gem. € {avg_per_kwh('marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
+            ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
+             f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
+            ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
+             f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
+            ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
+             f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
+            ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
+             f"gem. € {avg_per_kwh('teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
+        ]
+
+    return fixed_rows + variable_rows
+
+
 def _render_unified_breakdown(all_results, display_baseline, display_costs, breakdown_baseline, include_fixed):
     bd = breakdown_baseline
 
-    def avg_per_kwh(breakdown, cost_key, vol_key):
-        vol = breakdown[vol_key]
-        return breakdown[cost_key] / vol if vol else 0.0
-
-    all_rows_def = [
-        ("Abonnementskosten",               "abonnementskosten",         False, None,                    True,
-         f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
-        ("Netbeheerskosten",                 "netbeheerskosten",           False, None,                    True,
-         f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
-        ("Belastingvermindering",            "belastingvermindering",      True,  None,                    True,
-         f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
-        ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
-         f"gem. € {avg_per_kwh(bd, 'marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
-        ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
-         f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
-        ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
-         f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
-        ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
-         f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
-        ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
-         f"gem. € {avg_per_kwh(bd, 'teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
-    ]
+    all_rows_def = _breakdown_row_defs(bd)
     rows = [r for r in all_rows_def if include_fixed or not r[4]]
 
     def get_contribution(breakdown, key, is_credit):
@@ -244,28 +265,7 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
         with st.expander("Kostenopbouw", expanded=True):
             bd = breakdown_baseline
 
-            def avg_per_kwh(breakdown, cost_key, vol_key):
-                vol = breakdown[vol_key]
-                return breakdown[cost_key] / vol if vol else 0.0
-
-            all_rows = [
-                ("Abonnementskosten",               "abonnementskosten",         False, None,                    True,
-                 f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
-                ("Netbeheerskosten",                 "netbeheerskosten",           False, None,                    True,
-                 f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
-                ("Belastingvermindering",            "belastingvermindering",      True,  None,                    True,
-                 f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
-                ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
-                 f"gem. € {avg_per_kwh(bd, 'marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
-                ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
-                 f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
-                ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
-                 f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
-                ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
-                 f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
-                ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
-                 f"gem. € {avg_per_kwh(bd, 'teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
-            ]
+            all_rows = _breakdown_row_defs(bd)
             rows = [r for r in all_rows if include_fixed or not r[4]]
 
             col_label, col_base, col_sim, col_diff = st.columns([3, 2, 2, 2])
@@ -636,6 +636,10 @@ st.sidebar.divider()
 # 3. Provider
 st.sidebar.subheader("💶 Energieleverancier")
 with st.sidebar.expander("Provider Details", expanded=True):
+    contract_type_choice = st.radio(
+        "Type contract", ["Dynamisch contract", "Vast contract"], horizontal=True,
+        help="**Dynamisch contract:** je betaalt per kwartier de actuele day-ahead marktprijs.\n\n**Vast contract:** je betaalt een vast normaal- en daltarief, en ontvangt een vaste terugleververgoeding."
+    )
     custom_name = st.text_input(
         "Naam energieleverancier (voor eigen documentatie)", value="Mijn Leverancier"
     )
@@ -643,35 +647,72 @@ with st.sidebar.expander("Provider Details", expanded=True):
         "Vaste leveringskosten (€/jaar)", value=75.0, step=1.0,
         help="Jaarlijks vast bedrag dat je leverancier rekent bovenop de variabele energiekosten."
     )
-    custom_buy = st.number_input(
-        "Leveranciersopslag inkoop (€/kWh incl. BTW)", value=0.02, format="%.4f",
-        help="Opslag die je leverancier rekent per kWh die je van het net afneemt, bovenop de marktprijs en energiebelasting."
-    )
-    custom_sell = st.number_input(
-        "Leveranciersopslag teruglevering (€/kWh incl. BTW)", value=0.02, format="%.4f",
-        help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
-    )
 
-provider = Provider(
-    name=custom_name,
-    subscription_cost=custom_sub,
-    buying_fee=custom_buy,
-    selling_fee=custom_sell,
-    net_metering=False,
-    selling_fee_net_metering=True
-)
+    if contract_type_choice == "Vast contract":
+        custom_normaal = st.number_input(
+            "Normaaltarief (€/kWh incl. BTW)", value=0.28, step=0.01, format="%.4f",
+            help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 07:00 en 23:00."
+        )
+        custom_dal = st.number_input(
+            "Daltarief (€/kWh incl. BTW)", value=0.26, step=0.01, format="%.4f",
+            help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend."
+        )
+        custom_terug = st.number_input(
+            "Terugleververgoeding (€/kWh incl. BTW)", value=0.09, step=0.01, format="%.4f",
+            help="Vaste vergoeding per kWh die je teruglevert aan het net (geen saldering)."
+        )
+    else:
+        custom_buy = st.number_input(
+            "Leveranciersopslag inkoop (€/kWh incl. BTW)", value=0.02, format="%.4f",
+            help="Opslag die je leverancier rekent per kWh die je van het net afneemt, bovenop de marktprijs en energiebelasting."
+        )
+        custom_sell = st.number_input(
+            "Leveranciersopslag teruglevering (€/kWh incl. BTW)", value=0.02, format="%.4f",
+            help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
+        )
+
+if contract_type_choice == "Vast contract":
+    provider = Provider(
+        name=custom_name,
+        subscription_cost=custom_sub,
+        buying_fee=0.0,
+        selling_fee=0.0,
+        net_metering=False,
+        selling_fee_net_metering=False,
+        contract_type="fixed",
+        normaal_tarief=custom_normaal,
+        dal_tarief=custom_dal,
+        terugleververgoeding=custom_terug,
+    )
+else:
+    provider = Provider(
+        name=custom_name,
+        subscription_cost=custom_sub,
+        buying_fee=custom_buy,
+        selling_fee=custom_sell,
+        net_metering=False,
+        selling_fee_net_metering=True,
+        contract_type="dynamic",
+    )
 
 st.sidebar.divider()
 
 # 4. Strategy
 st.sidebar.subheader("🎛️ Aansturing")
-strategy_map = {
-    "PV Prioriteit (Zelfconsumptie)": "PV",
-    "Kosten Optimaal (MPC)": "MPC"
-}
+if contract_type_choice == "Vast contract":
+    strategy_map = {
+        "PV Prioriteit (Zelfconsumptie)": "PV"
+    }
+    strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\nBij een vast contract is 'Kosten Optimaal (MPC)' niet beschikbaar: die strategie optimaliseert op de dynamische day-ahead prijs, terwijl je bij een vast contract een vlak normaal-/daltarief betaalt."
+else:
+    strategy_map = {
+        "PV Prioriteit (Zelfconsumptie)": "PV",
+        "Kosten Optimaal (MPC)": "MPC"
+    }
+    strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
 selected_strategy = st.sidebar.selectbox(
     "Selecteer Strategie", list(strategy_map.keys()),
-    help="**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
+    help=strategy_help
 )
 
 # Price data always via API; manual upload kept in back-end only

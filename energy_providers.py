@@ -32,14 +32,34 @@ def get_grid_operator_fee(dso:str = 'Enexis') -> float:
         return 386.93
     
 
+def get_tariff_period(dt) -> str:
+    # Standard NL fixed-contract windows: dal = weekday nights (23:00-07:00) + entire weekend.
+    if dt.weekday() >= 5:
+        return "dal"
+    if dt.hour >= 23 or dt.hour < 7:
+        return "dal"
+    return "normaal"
+
+
 class Provider:
-    def __init__(self, name: str, subscription_cost: float, buying_fee: float, selling_fee: float, net_metering: bool, selling_fee_net_metering: bool):
+    def __init__(self, name: str, subscription_cost: float, buying_fee: float, selling_fee: float, net_metering: bool, selling_fee_net_metering: bool,
+                 contract_type: str = "dynamic", normaal_tarief: float = None, dal_tarief: float = None, terugleververgoeding: float = None):
         self.name = name
         self.subscription_cost = subscription_cost  # yearly fixed cost in euros
         self.buying_fee = buying_fee          # cost per kWh bought for the client in euros
         self.selling_fee = selling_fee        # revenue per kWh sold back to the provider in euros
         self.net_metering = net_metering  # whether net metering applies
         self.selling_fee_net_metering = selling_fee_net_metering  # whether the provider allows to net meter the selling fee
+
+        if contract_type not in ("dynamic", "fixed"):
+            raise ValueError("contract_type must be 'dynamic' or 'fixed'.")
+        if contract_type == "fixed" and (normaal_tarief is None or dal_tarief is None or terugleververgoeding is None):
+            raise ValueError("Fixed contracts require normaal_tarief, dal_tarief and terugleververgoeding.")
+
+        self.contract_type = contract_type  # 'dynamic' or 'fixed'
+        self.normaal_tarief = normaal_tarief              # €/kWh incl. BTW and energiebelasting
+        self.dal_tarief = dal_tarief                      # €/kWh incl. BTW and energiebelasting
+        self.terugleververgoeding = terugleververgoeding  # €/kWh incl. BTW, paid for every kWh fed in
 
 
     def get_fixed_costs(self, year: int=2025, time_interfal = 'yearly') -> float:
@@ -125,7 +145,41 @@ class Provider:
 
         return bd["total_flexible"]
 
-        
+    def calculate_fixed_costs_breakdown(self, consumption_kwh, feed_in_kwh, datetime_index) -> dict:
+        normaal_kwh = 0.0
+        dal_kwh = 0.0
+        for c, dt in zip(consumption_kwh, datetime_index):
+            if get_tariff_period(dt) == "dal":
+                dal_kwh += c
+            else:
+                normaal_kwh += c
+
+        total_feed_in = float(sum(feed_in_kwh))
+
+        normaal_kosten = normaal_kwh * self.normaal_tarief
+        dal_kosten = dal_kwh * self.dal_tarief
+        teruglevering_opbrengst = total_feed_in * self.terugleververgoeding
+
+        total_flexible = normaal_kosten + dal_kosten - teruglevering_opbrengst
+
+        return {
+            "normaal_kosten": normaal_kosten,
+            "dal_kosten": dal_kosten,
+            "teruglevering_opbrengst": teruglevering_opbrengst,
+            "total_flexible": total_flexible,
+            "total_consumption_kwh": normaal_kwh + dal_kwh,
+            "total_feed_in_kwh": total_feed_in,
+            "normaal_kwh": normaal_kwh,
+            "dal_kwh": dal_kwh,
+        }
+
+    def calculate_costs_breakdown(self, consumption_kwh, feed_in_kwh, datetime_index, prices_eur_per_kwh_excl_vat=None) -> dict:
+        if self.contract_type == "fixed":
+            return self.calculate_fixed_costs_breakdown(consumption_kwh, feed_in_kwh, datetime_index)
+        return self.calculate_flexible_costs_breakdown(consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat)
+
+    def calculate_costs_total(self, consumption_kwh, feed_in_kwh, datetime_index, prices_eur_per_kwh_excl_vat=None) -> float:
+        return self.calculate_costs_breakdown(consumption_kwh, feed_in_kwh, datetime_index, prices_eur_per_kwh_excl_vat)["total_flexible"]
 
     def calculate_dynamic_bill(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat, dso: str = 'Enexis') -> float:
         netbeheerskosten = get_grid_operator_fee(dso)
