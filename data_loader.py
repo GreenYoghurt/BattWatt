@@ -6,13 +6,20 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List, Type, Union
 import json
 import io
+import re
+
+
+def _redact_security_token(message: str) -> str:
+    """Strip ENTSO-E securityToken values (they appear in request-URL text embedded in errors raised by the underlying HTTP client)."""
+    return re.sub(r"(securityToken=)[^&\s]+", r"\1***REDACTED***", message)
+
 
 def fetch_entsoe_prices(api_key: str, start_date: pd.Timestamp, end_date: pd.Timestamp, country_code: str = 'NL') -> pd.DataFrame:
     """
     Fetch day-ahead electricity prices from ENTSO-E API.
     """
     client = EntsoePandasClient(api_key=api_key)
-    
+
     if start_date.tz is None:
         start_date = start_date.tz_localize('Europe/Amsterdam')
     if end_date.tz is None:
@@ -21,7 +28,7 @@ def fetch_entsoe_prices(api_key: str, start_date: pd.Timestamp, end_date: pd.Tim
     try:
         prices_series = client.query_day_ahead_prices(country_code, start=start_date, end=end_date)
     except Exception as e:
-        raise RuntimeError(f"Error fetching data from ENTSO-E: {e}")
+        raise RuntimeError(f"Error fetching data from ENTSO-E: {_redact_security_token(str(e))}")
 
     df = prices_series.reset_index()
     df.columns = ['timestamp', 'day_ahead_price']
