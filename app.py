@@ -12,6 +12,7 @@ from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
 import base64
+import time
 
 # Page configuration
 st.set_page_config(page_title="BattWatt - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
@@ -116,6 +117,11 @@ _battery_display_to_key = {
     "15 kWh": "Bliq_15kwh",
 }
 _battery_preset_options = list(_battery_display_to_key.keys()) + ["Handmatig invoeren (Custom)"]
+
+# Automatic battery-size x efficiency sweep ("Batterijgrootte vergelijking" mode)
+SWEEP_SIZES_KWH = [5, 10, 15, 20]
+SWEEP_SIZE_PRESETS = {5: "Bliq_5kwh", 10: "Bliq_10kwh", 15: "Bliq_15kwh", 20: "Bliq_20kwh"}
+SWEEP_EFFICIENCIES = [0.80, 0.90, 0.95]
 
 def _battery_from_id(bid):
     preset = st.session_state.get(f"bat_preset_{bid}", "10 kWh")
@@ -364,6 +370,158 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
 
+
+# ── Battery-size sweep renderer ────────────────────────────────────────────────
+
+_SWEEP_COST_COLOR = "#2a78d6"
+_SWEEP_SAVINGS_COLOR = "#eb6834"
+
+
+def _build_single_metric_chart(rows, metric_key, title, color, fill_rgba):
+    """Line-plus-band chart for one metric: x=batterijgrootte, y=€, a band
+    spanning the 80-95% efficiency range with the 90% value as the central
+    line. A single series needs no legend box — the title names it."""
+    by_size = {size: {} for size in SWEEP_SIZES_KWH}
+    for r in rows:
+        by_size[r['size_kwh']][r['efficiency']] = r
+
+    mid = [by_size[s][0.90][metric_key] for s in SWEEP_SIZES_KWH]
+    low_eff = [by_size[s][0.80][metric_key] for s in SWEEP_SIZES_KWH]
+    high_eff = [by_size[s][0.95][metric_key] for s in SWEEP_SIZES_KWH]
+    lower = [min(a, b) for a, b in zip(low_eff, high_eff)]
+    upper = [max(a, b) for a, b in zip(low_eff, high_eff)]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=SWEEP_SIZES_KWH + SWEEP_SIZES_KWH[::-1],
+        y=upper + lower[::-1],
+        fill='toself', fillcolor=fill_rgba,
+        line=dict(width=0), hoverinfo='skip', showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=SWEEP_SIZES_KWH, y=mid, mode='lines+markers',
+        line=dict(color=color, width=2), marker=dict(size=8),
+        showlegend=False,
+        customdata=list(zip(low_eff, high_eff)),
+        hovertemplate=(
+            "€%{y:,.2f}<br>"
+            "Bij 80%: €%{customdata[0]:,.2f} · Bij 95%: €%{customdata[1]:,.2f}"
+            "<extra></extra>"
+        ),
+    ))
+    fig.update_layout(
+        title=f"{title} (band = 80-95% rendement, lijn = 90%)",
+        xaxis=dict(title="Batterijgrootte (kWh)", tickvals=SWEEP_SIZES_KWH),
+        yaxis=dict(title="€ per jaar"),
+        height=350,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _build_sweep_charts(rows, include_fixed):
+    """Two stacked single-metric charts (kosten, then besparing) instead of
+    both series in one plot.
+
+    Besparing is identical with or without vaste kosten (the fixed costs are
+    the same for the baseline and every battery config, so they cancel out of
+    the difference) — only the kosten chart moves with the toggle."""
+    cost_key = 'cost_total' if include_fixed else 'cost_variable'
+    cost_suffix = "incl. vaste kosten" if include_fixed else "excl. vaste kosten"
+    cost_fig = _build_single_metric_chart(
+        rows, cost_key, f"Totale kosten per batterijgrootte ({cost_suffix})",
+        _SWEEP_COST_COLOR, "rgba(42,120,214,0.15)"
+    )
+    savings_fig = _build_single_metric_chart(
+        rows, 'savings_variable', "Besparing per batterijgrootte",
+        _SWEEP_SAVINGS_COLOR, "rgba(235,104,52,0.15)"
+    )
+    return cost_fig, savings_fig
+
+
+def _render_single_kostenopbouw(bd, include_fixed, cost_display):
+    """Single-column Kostenopbouw table (Post / Bedrag) for one battery
+    configuration — unlike _render_battery_detail's baseline-vs-simulated
+    comparison, this shows just that one config's breakdown."""
+    all_rows = _breakdown_row_defs(bd)
+    rows = [r for r in all_rows if include_fixed or not r[4]]
+
+    col_label, col_amount = st.columns([3, 2])
+    col_label.markdown("**Post**")
+    col_amount.markdown("**Bedrag**")
+    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+
+    def fmt_cell(amount, volume_kwh):
+        sign = "−" if amount < 0 else ""
+        vol_html = f" <small style='color:grey'>({volume_kwh:,.0f} kWh)</small>" if volume_kwh is not None else ""
+        return f"{sign}€ {abs(amount):,.2f}{vol_html}"
+
+    prev_fixed = None
+    for row_label, key, is_credit, vol_key, is_fixed, tarief_str in rows:
+        if include_fixed and prev_fixed is not None and prev_fixed != is_fixed:
+            st.markdown("<div style='margin:6px 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Variabele kosten</div>", unsafe_allow_html=True)
+        elif include_fixed and prev_fixed is None:
+            st.markdown("<div style='margin:0 0 2px 0; font-size:0.75rem; color:grey; text-transform:uppercase; letter-spacing:0.05em'>Vaste kosten</div>", unsafe_allow_html=True)
+        prev_fixed = is_fixed
+
+        raw = bd[key]
+        contribution = -raw if is_credit else raw
+        vol = bd[vol_key] if vol_key else None
+
+        col_label, col_amount = st.columns([3, 2])
+        col_label.markdown(f"{row_label} <small style='color:grey'>({tarief_str})</small>", unsafe_allow_html=True)
+        col_amount.markdown(fmt_cell(contribution, vol), unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+    col_label, col_amount = st.columns([3, 2])
+    col_label.markdown("**Totaal**")
+    col_amount.markdown(f"**€ {cost_display:,.2f}**")
+
+
+def _render_sweep_results(sweep_data):
+    rows = sweep_data['rows']
+    strategy = sweep_data['strategy']
+
+    st.header("Resultaten Overzicht: Batterijgrootte vergelijking")
+    if sweep_data.get('provider_name'):
+        st.caption(f"📄 Energieleverancier: **{sweep_data['provider_name']}**")
+
+    include_fixed_sweep = st.checkbox(
+        "Vaste kosten meenemen", value=True, key="sweep_include_fixed",
+        help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken. De besparing verandert niet — vaste kosten zijn voor elke batterij en de baseline gelijk."
+    )
+    cost_baseline_display = sweep_data['cost_baseline'] if include_fixed_sweep else sweep_data['cost_baseline_variable']
+    st.caption(
+        f"Baseline (geen batterij): **€{cost_baseline_display:,.2f}** — "
+        f"strategie: **{strategy}**"
+    )
+
+    cost_fig, savings_fig = _build_sweep_charts(rows, include_fixed_sweep)
+    st.plotly_chart(cost_fig, use_container_width=True)
+    st.plotly_chart(savings_fig, use_container_width=True)
+
+    st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
+
+    with st.expander("Details per configuratie", expanded=False):
+        cost_key = 'cost_total' if include_fixed_sweep else 'cost_variable'
+        cost_col = f"Totale kosten {'incl.' if include_fixed_sweep else 'excl.'} vaste kosten (€)"
+        summary_df = pd.DataFrame([{
+            "Batterijgrootte (kWh)": r['size_kwh'],
+            "Rendement": f"{r['efficiency']:.0%}",
+            cost_col: round(r[cost_key], 2),
+            "Besparing (€)": round(r['savings_variable'], 2),
+            "Batterij cycli": round(getattr(r['result'], 'total_cycles', 0.0), 1),
+        } for r in rows])
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+        for r in rows:
+            with st.expander(f"{r['size_kwh']} kWh @ {r['efficiency']:.0%} rendement", expanded=False):
+                _render_single_kostenopbouw(
+                    r['breakdown_simulated'], include_fixed=include_fixed_sweep,
+                    cost_display=r[cost_key]
+                )
+
+
 # ── Secrets / API Key ─────────────────────────────────────────────────────────
 
 try:
@@ -571,65 +729,78 @@ else:  # SlimmeMeterPortal API
 
 st.sidebar.divider()
 
-# 2. Batteries — dynamic list
+# 2. Batteries
 st.sidebar.subheader("🔋 Batterijen")
 
-if "battery_ids" not in st.session_state:
-    st.session_state.battery_ids = [0]
-    st.session_state.battery_counter = 1
-    st.session_state["bat_label_0"] = "10 kWh"
-    st.session_state["bat_preset_0"] = "10 kWh"
+battery_mode = st.sidebar.radio(
+    "Batterijconfiguratie", ["Batterijgrootte vergelijking", "Handmatige batterijen"],
+    help="**Handmatige batterijen:** stel zelf 1 of meer specifieke batterijen samen.\n\n**Batterijgrootte vergelijking:** draait automatisch 12 simulaties (4 groottes × 3 rendementen) en toont het effect van batterijgrootte op kosten en besparing."
+)
 
-for bid in list(st.session_state.battery_ids):
-    # Ensure defaults exist for any battery added via the button
-    if f"bat_label_{bid}" not in st.session_state:
-        st.session_state[f"bat_label_{bid}"] = "10 kWh"
-    if f"bat_preset_{bid}" not in st.session_state:
-        st.session_state[f"bat_preset_{bid}"] = "10 kWh"
+if battery_mode == "Batterijgrootte vergelijking":
+    sizes_str = ", ".join(f"{s} kWh" for s in SWEEP_SIZES_KWH)
+    eff_str = ", ".join(f"{e:.0%}" for e in SWEEP_EFFICIENCIES)
+    st.sidebar.caption(
+        f"Draait automatisch **{len(SWEEP_SIZES_KWH) * len(SWEEP_EFFICIENCIES)} simulaties**: "
+        f"groottes {sizes_str} × rendementen {eff_str}."
+    )
+else:
+    if "battery_ids" not in st.session_state:
+        st.session_state.battery_ids = [0]
+        st.session_state.battery_counter = 1
+        st.session_state["bat_label_0"] = "10 kWh"
+        st.session_state["bat_preset_0"] = "10 kWh"
 
-    idx_in_list = st.session_state.battery_ids.index(bid) + 1
-    expander_label = f"Batterij {idx_in_list}: {st.session_state[f'bat_label_{bid}']}"
-    with st.sidebar.expander(expander_label, expanded=(idx_in_list == 1)):
-        col_l, col_d = st.columns([5, 1])
-        with col_l:
-            st.text_input("Label", key=f"bat_label_{bid}")
-        with col_d:
-            st.write("")
-            if len(st.session_state.battery_ids) > 1:
-                if st.button("🗑", key=f"del_{bid}"):
-                    st.session_state.battery_ids.remove(bid)
-                    st.rerun()
+    for bid in list(st.session_state.battery_ids):
+        # Ensure defaults exist for any battery added via the button
+        if f"bat_label_{bid}" not in st.session_state:
+            st.session_state[f"bat_label_{bid}"] = "10 kWh"
+        if f"bat_preset_{bid}" not in st.session_state:
+            st.session_state[f"bat_preset_{bid}"] = "10 kWh"
 
-        preset_default_idx = (_battery_preset_options.index(st.session_state[f"bat_preset_{bid}"])
-                              if st.session_state[f"bat_preset_{bid}"] in _battery_preset_options else 1)
-        st.selectbox("Sjabloon", _battery_preset_options, index=preset_default_idx, key=f"bat_preset_{bid}")
+        idx_in_list = st.session_state.battery_ids.index(bid) + 1
+        expander_label = f"Batterij {idx_in_list}: {st.session_state[f'bat_label_{bid}']}"
+        with st.sidebar.expander(expander_label, expanded=(idx_in_list == 1)):
+            col_l, col_d = st.columns([5, 1])
+            with col_l:
+                st.text_input("Label", key=f"bat_label_{bid}")
+            with col_d:
+                st.write("")
+                if len(st.session_state.battery_ids) > 1:
+                    if st.button("🗑", key=f"del_{bid}"):
+                        st.session_state.battery_ids.remove(bid)
+                        st.rerun()
 
-        if st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)":
-            st.number_input("Capaciteit (kWh)", value=10.0, step=0.5, key=f"bat_cap_{bid}")
-            st.number_input(
-                "Max. Laadvermogen (kW)", value=None, step=0.1, key=f"bat_charge_{bid}",
-                placeholder="bijv. 3.68"
-            )
-            st.number_input(
-                "Max. Ontlaadvermogen (kW)", value=None, step=0.1, key=f"bat_discharge_{bid}",
-                placeholder="bijv. 3.68"
-            )
-            st.slider(
-                "Netto rendement gehele installatie (%)", 80, 100, 90, key=f"bat_eff_{bid}",
-                help="Rendement van de volledige installatie over een volledige laad- en ontlaadcyclus (round-trip)."
-            )
-            st.number_input(
-                "Standby verbruik (W)", value=10.0, step=1.0, min_value=0.0, key=f"bat_standby_{bid}",
-                help="Continu sluipverbruik van de omvormer/BMS, ook wanneer de batterij niet laadt of ontlaadt."
-            )
+            preset_default_idx = (_battery_preset_options.index(st.session_state[f"bat_preset_{bid}"])
+                                  if st.session_state[f"bat_preset_{bid}"] in _battery_preset_options else 1)
+            st.selectbox("Sjabloon", _battery_preset_options, index=preset_default_idx, key=f"bat_preset_{bid}")
 
-if st.sidebar.button("➕ Batterij toevoegen", use_container_width=True):
-    new_id = st.session_state.battery_counter
-    st.session_state.battery_counter += 1
-    st.session_state.battery_ids.append(new_id)
-    st.session_state[f"bat_label_{new_id}"] = "10 kWh"
-    st.session_state[f"bat_preset_{new_id}"] = "10 kWh"
-    st.rerun()
+            if st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)":
+                st.number_input("Capaciteit (kWh)", value=10.0, step=0.5, key=f"bat_cap_{bid}")
+                st.number_input(
+                    "Max. Laadvermogen (kW)", value=None, step=0.1, key=f"bat_charge_{bid}",
+                    placeholder="bijv. 3.68"
+                )
+                st.number_input(
+                    "Max. Ontlaadvermogen (kW)", value=None, step=0.1, key=f"bat_discharge_{bid}",
+                    placeholder="bijv. 3.68"
+                )
+                st.slider(
+                    "Netto rendement gehele installatie (%)", 80, 100, 90, key=f"bat_eff_{bid}",
+                    help="Rendement van de volledige installatie over een volledige laad- en ontlaadcyclus (round-trip)."
+                )
+                st.number_input(
+                    "Standby verbruik (W)", value=10.0, step=1.0, min_value=0.0, key=f"bat_standby_{bid}",
+                    help="Continu sluipverbruik van de omvormer/BMS, ook wanneer de batterij niet laadt of ontlaadt."
+                )
+
+    if st.sidebar.button("➕ Batterij toevoegen", use_container_width=True):
+        new_id = st.session_state.battery_counter
+        st.session_state.battery_counter += 1
+        st.session_state.battery_ids.append(new_id)
+        st.session_state[f"bat_label_{new_id}"] = "10 kWh"
+        st.session_state[f"bat_preset_{new_id}"] = "10 kWh"
+        st.rerun()
 
 st.sidebar.divider()
 
@@ -725,7 +896,7 @@ st.sidebar.divider()
 
 can_simulate = False
 meter_data_ready = bool(uploaded_meter) if meter_source == "Bestand upload" else st.session_state.get("smp_meter_df") is not None
-missing_battery_power = any(
+missing_battery_power = battery_mode == "Handmatige batterijen" and any(
     st.session_state.get(f"bat_preset_{bid}") == "Handmatig invoeren (Custom)"
     and (st.session_state.get(f"bat_charge_{bid}") is None or st.session_state.get(f"bat_discharge_{bid}") is None)
     for bid in st.session_state.get("battery_ids", [])
@@ -739,43 +910,58 @@ if meter_data_ready:
         st.sidebar.error("⚠️ Vul max. laad- en ontlaadvermogen in voor handmatige batterijen.")
         can_simulate = False
 
+def _format_duration(seconds):
+    """Formats a duration in seconds as e.g. '45 sec' or '2 min 15 sec'."""
+    seconds = max(0, int(round(seconds)))
+    minutes, secs = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes} min {secs} sec"
+    return f"{secs} sec"
+
+
+def _prepare_simulation_data(meter_df):
+    """Fetch prices, merge with meter data, and build the no-battery baseline.
+    Shared by both the manual and sweep simulation runners. Must be called
+    from within an active `st.status(...)` block."""
+    start_date = meter_df['timestamp'].min()
+    end_date = meter_df['timestamp'].max()
+    st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
+    try:
+        price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
+    except Exception as e:
+        st.error(f"Fout bij ophalen prijzen: {e}")
+        st.stop()
+
+    st.write("Data samenvoegen...")
+    merged_df = merge_data(meter_df, price_df)
+    merged_df['day_ahead_price'] = merged_df['day_ahead_price'] / 1000
+    merged_df.set_index("timestamp", drop=False, inplace=True)
+
+    baseline_df = merged_df.copy()
+    net = baseline_df['teruglevering'] - baseline_df['verbruik']
+    baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
+    baseline_df['adjusted_production'] = net.clip(lower=0)
+    baseline_result = SimulationResult(
+        df=baseline_df,
+        total_production_kwh=merged_df['teruglevering'].sum(),
+        total_consumption_kwh=merged_df['verbruik'].sum(),
+        total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
+        total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
+        final_soc_pct=0,
+        final_soc_kwh=0,
+        delta_soc_kwh=0
+    )
+    billing = BillingEngine(provider)
+    cost_baseline = billing.calculate_bill(baseline_result)
+    breakdown_baseline = billing.calculate_bill_breakdown(baseline_result)
+
+    return merged_df, billing, cost_baseline, breakdown_baseline
+
+
 def _run_simulation(meter_df):
     """Fetch prices, run baseline + all battery configs sequentially, store results."""
     with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-        # Prices
-        start_date = meter_df['timestamp'].min()
-        end_date = meter_df['timestamp'].max()
-        st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
-        try:
-            price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
-        except Exception as e:
-            st.error(f"Fout bij ophalen prijzen: {e}")
-            st.stop()
-
-        # Merge
-        st.write("Data samenvoegen...")
-        merged_df = merge_data(meter_df, price_df)
-        merged_df['day_ahead_price'] = merged_df['day_ahead_price'] / 1000
-        merged_df.set_index("timestamp", drop=False, inplace=True)
-
-        # Baseline (no battery)
-        baseline_df = merged_df.copy()
-        net = baseline_df['teruglevering'] - baseline_df['verbruik']
-        baseline_df['adjusted_consumption'] = (-net).clip(lower=0)
-        baseline_df['adjusted_production'] = net.clip(lower=0)
-        baseline_result = SimulationResult(
-            df=baseline_df,
-            total_production_kwh=merged_df['teruglevering'].sum(),
-            total_consumption_kwh=merged_df['verbruik'].sum(),
-            total_adjusted_production_kwh=baseline_df['adjusted_production'].sum(),
-            total_adjusted_consumption_kwh=baseline_df['adjusted_consumption'].sum(),
-            final_soc_pct=0,
-            final_soc_kwh=0,
-            delta_soc_kwh=0
-        )
-        billing = BillingEngine(provider)
-        cost_baseline = billing.calculate_bill(baseline_result)
-        breakdown_baseline = billing.calculate_bill_breakdown(baseline_result)
+        merged_df, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
 
         # Sequential simulation per battery
         battery_ids = list(st.session_state.battery_ids)
@@ -824,6 +1010,83 @@ def _run_simulation(meter_df):
             'strategy': strategy_map[selected_strategy],
             'provider_name': provider.name,
         }
+        st.session_state.pop('sweep_result', None)
+
+
+def _run_sweep_simulation(meter_df):
+    """Fetch prices, then run the automatic battery size x efficiency grid
+    (SWEEP_SIZES_KWH x SWEEP_EFFICIENCIES) and store the results."""
+    with st.status("Data verwerken en sweep-simulatie uitvoeren...", expanded=True) as status:
+        merged_df, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
+
+        combos = [(size, eff) for size in SWEEP_SIZES_KWH for eff in SWEEP_EFFICIENCIES]
+        rows = []
+        progress_bar = st.progress(0, text="Sweep voortgang")
+        sweep_start = time.time()
+
+        for i, (size, eff) in enumerate(combos):
+            st.write(f"Combinatie {i + 1}/{len(combos)}: **{size} kWh @ {eff:.0%}**...")
+            battery = get_battery(SWEEP_SIZE_PRESETS[size], efficiency=eff)
+
+            if strategy_map[selected_strategy] == "PV":
+                controller = Controller_PV(battery)
+            else:
+                controller = Controller_MPC(battery, merged_df, provider,
+                                            horizon_hours=24.0, reoptimize_every_hours=12.0)
+
+            simulator = Simulator(battery, controller)
+            result = simulator.run(merged_df)
+            result.df['battery_soc_kwh'] = result.df['battery_soc'] * battery.capacity_kwh / 100
+
+            cost_simulated = billing.calculate_bill(result)
+            breakdown_simulated = billing.calculate_bill_breakdown(result)
+            fixed_sim = (breakdown_simulated['abonnementskosten']
+                         + breakdown_simulated['netbeheerskosten']
+                         - breakdown_simulated['belastingvermindering'])
+            cost_variable = cost_simulated - fixed_sim
+
+            rows.append({
+                'size_kwh': size,
+                'efficiency': eff,
+                'battery': battery,
+                'result': result,
+                'cost_total': cost_simulated,
+                'cost_variable': cost_variable,
+                'breakdown_simulated': breakdown_simulated,
+            })
+            done = i + 1
+            remaining = len(combos) - done
+            avg_per_combo = (time.time() - sweep_start) / done
+            eta_str = f" — nog ~{_format_duration(avg_per_combo * remaining)}" if remaining else ""
+            progress_bar.progress(done / len(combos), text=f"Combinatie {done}/{len(combos)}: {size} kWh @ {eff:.0%}{eta_str}")
+
+        progress_bar.empty()
+
+        fixed_base = (breakdown_baseline['abonnementskosten']
+                      + breakdown_baseline['netbeheerskosten']
+                      - breakdown_baseline['belastingvermindering'])
+        cost_baseline_variable = cost_baseline - fixed_base
+        for r in rows:
+            r['savings_variable'] = cost_baseline_variable - r['cost_variable']
+
+        status.update(label="Sweep Voltooid!", state="complete", expanded=False)
+        st.session_state['sweep_result'] = {
+            'cost_baseline': cost_baseline,
+            'cost_baseline_variable': cost_baseline_variable,
+            'breakdown_baseline': breakdown_baseline,
+            'rows': rows,
+            'strategy': strategy_map[selected_strategy],
+            'provider_name': provider.name,
+        }
+        st.session_state.pop('simulation_result', None)
+
+
+def _run_selected_simulation(meter_df):
+    """Dispatch to the manual or sweep runner based on the current battery_mode."""
+    if battery_mode == "Batterijgrootte vergelijking":
+        _run_sweep_simulation(meter_df)
+    else:
+        _run_simulation(meter_df)
 
 
 if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
@@ -843,9 +1106,10 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
             'failed_checks': failed_checks,
         }
         st.session_state.pop('simulation_result', None)
+        st.session_state.pop('sweep_result', None)
     else:
         st.session_state.pop('pending_simulation', None)
-        _run_simulation(meter_df)
+        _run_selected_simulation(meter_df)
 
 # Credits & Logo
 st.sidebar.markdown("---")
@@ -876,8 +1140,11 @@ if 'pending_simulation' in st.session_state:
     if st.button("▶ Analyse alsnog uitvoeren", type="primary"):
         meter_df = st.session_state['pending_simulation']['meter_df']
         del st.session_state['pending_simulation']
-        _run_simulation(meter_df)
+        _run_selected_simulation(meter_df)
         st.rerun()
+
+elif 'sweep_result' in st.session_state:
+    _render_sweep_results(st.session_state['sweep_result'])
 
 elif 'simulation_result' in st.session_state:
     res_data = st.session_state['simulation_result']
