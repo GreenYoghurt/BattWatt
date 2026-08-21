@@ -2,9 +2,30 @@ import pytest
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from data_loader import SmartLoader, SlimmeMeterPortalAPILoader
+from unittest.mock import patch
+from data_loader import SmartLoader, SlimmeMeterPortalAPILoader, fetch_entsoe_prices
 import json
 import io
+
+
+def test_fetch_entsoe_prices_redacts_security_token():
+    leaked_url = (
+        "400 Client Error: for url: https://web-api.tp.entsoe.eu/api"
+        "?documentType=A44&securityToken=9b9a67b5-c628-4d61-9fae-603b65e62b9e"
+        "&periodStart=202412302300&periodEnd=202512302300"
+    )
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls:
+        mock_client_cls.return_value.query_day_ahead_prices.side_effect = RuntimeError(leaked_url)
+        with pytest.raises(RuntimeError) as exc_info:
+            fetch_entsoe_prices(
+                "9b9a67b5-c628-4d61-9fae-603b65e62b9e",
+                pd.Timestamp("2025-01-01"),
+                pd.Timestamp("2025-01-02"),
+            )
+
+    message = str(exc_info.value)
+    assert "9b9a67b5-c628-4d61-9fae-603b65e62b9e" not in message
+    assert "securityToken=***REDACTED***" in message
 
 def test_homewizard_auto_detect(tmp_path):
     # Create a dummy HomeWizard CSV
