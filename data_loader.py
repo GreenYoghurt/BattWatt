@@ -2,11 +2,35 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from entsoe import EntsoePandasClient
+from entsoe.exceptions import NoMatchingDataError
+import requests
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List, Type, Union
 import json
 import io
 import re
+import time
+
+
+# Seconds to wait before each retry. The ENTSO-E client only retries connection
+# errors itself, so 5xx responses (e.g. the platform's maintenance page) and read
+# timeouts fail on the first attempt unless we retry them here.
+ENTSOE_RETRY_DELAYS = (2, 5)
+ENTSOE_RETRY_KINDS = {"unavailable", "timeout", "connection"}
+ENTSOE_TIMEOUT_SECONDS = 60
+
+
+class EntsoeFetchError(RuntimeError):
+    """Failure while fetching ENTSO-E day-ahead prices.
+
+    ``kind`` classifies the cause ('auth', 'unavailable', 'rate_limit',
+    'bad_request', 'no_data', 'timeout', 'connection' or 'unknown') so callers
+    can show a targeted message instead of the raw HTTP error.
+    """
+
+    def __init__(self, message: str, kind: str = "unknown"):
+        super().__init__(message)
+        self.kind = kind
 
 
 def _redact_security_token(message: str) -> str:
@@ -14,21 +38,53 @@ def _redact_security_token(message: str) -> str:
     return re.sub(r"(securityToken=)[^&\s]+", r"\1***REDACTED***", message)
 
 
+def _classify_entsoe_error(exc: Exception) -> str:
+    """Map an exception from the ENTSO-E client onto an `EntsoeFetchError.kind`."""
+    if isinstance(exc, NoMatchingDataError):
+        return "no_data"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        status = exc.response.status_code
+        if status in (401, 403):
+            return "auth"
+        if status == 429:
+            return "rate_limit"
+        if status == 400:
+            return "bad_request"
+        if status >= 500:
+            return "unavailable"
+    if isinstance(exc, requests.Timeout):
+        return "timeout"
+    if isinstance(exc, requests.ConnectionError):
+        return "connection"
+    return "unknown"
+
+
 def fetch_entsoe_prices(api_key: str, start_date: pd.Timestamp, end_date: pd.Timestamp, country_code: str = 'NL') -> pd.DataFrame:
     """
     Fetch day-ahead electricity prices from ENTSO-E API.
+
+    Transient failures (5xx, timeouts, connection errors) are retried with a
+    short backoff; anything else fails immediately. Raises `EntsoeFetchError`,
+    whose `kind` says what went wrong.
     """
-    client = EntsoePandasClient(api_key=api_key)
+    client = EntsoePandasClient(api_key=api_key, timeout=ENTSOE_TIMEOUT_SECONDS)
 
     if start_date.tz is None:
         start_date = start_date.tz_localize('Europe/Amsterdam')
     if end_date.tz is None:
         end_date = end_date.tz_localize('Europe/Amsterdam')
 
-    try:
-        prices_series = client.query_day_ahead_prices(country_code, start=start_date, end=end_date)
-    except Exception as e:
-        raise RuntimeError(f"Error fetching data from ENTSO-E: {_redact_security_token(str(e))}")
+    attempts = len(ENTSOE_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        try:
+            prices_series = client.query_day_ahead_prices(country_code, start=start_date, end=end_date)
+            break
+        except Exception as e:
+            kind = _classify_entsoe_error(e)
+            if attempt == attempts - 1 or kind not in ENTSOE_RETRY_KINDS:
+                detail = _redact_security_token(str(e)) or type(e).__name__
+                raise EntsoeFetchError(f"Error fetching data from ENTSO-E: {detail}", kind=kind) from e
+            time.sleep(ENTSOE_RETRY_DELAYS[attempt])
 
     df = prices_series.reset_index()
     df.columns = ['timestamp', 'day_ahead_price']
