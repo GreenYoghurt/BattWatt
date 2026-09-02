@@ -3,7 +3,12 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from unittest.mock import patch
-from data_loader import SmartLoader, SlimmeMeterPortalAPILoader, fetch_entsoe_prices
+from data_loader import (
+    SmartLoader, SlimmeMeterPortalAPILoader, fetch_entsoe_prices,
+    EntsoeFetchError, ENTSOE_RETRY_DELAYS,
+)
+from entsoe.exceptions import NoMatchingDataError
+import requests
 import json
 import io
 
@@ -26,6 +31,72 @@ def test_fetch_entsoe_prices_redacts_security_token():
     message = str(exc_info.value)
     assert "9b9a67b5-c628-4d61-9fae-603b65e62b9e" not in message
     assert "securityToken=***REDACTED***" in message
+
+
+def _http_error(status_code):
+    response = requests.Response()
+    response.status_code = status_code
+    return requests.HTTPError(f"{status_code} Error for url: ...", response=response)
+
+
+@pytest.mark.parametrize("error, expected_kind", [
+    (_http_error(503), "unavailable"),
+    (_http_error(401), "auth"),
+    (_http_error(429), "rate_limit"),
+    (_http_error(400), "bad_request"),
+    (requests.ReadTimeout("timed out"), "timeout"),
+    (requests.ConnectionError("no route"), "connection"),
+    (NoMatchingDataError(), "no_data"),
+    (ValueError("something else"), "unknown"),
+])
+def test_fetch_entsoe_prices_classifies_errors(error, expected_kind):
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls, \
+            patch("data_loader.time.sleep"):
+        mock_client_cls.return_value.query_day_ahead_prices.side_effect = error
+        with pytest.raises(EntsoeFetchError) as exc_info:
+            fetch_entsoe_prices("dummy-key", pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-02"))
+
+    assert exc_info.value.kind == expected_kind
+    # An empty str(exc) (e.g. bare NoMatchingDataError) must not yield a bare prefix.
+    assert str(exc_info.value).strip().endswith(":") is False
+
+
+def test_fetch_entsoe_prices_retries_transient_errors():
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls, \
+            patch("data_loader.time.sleep") as mock_sleep:
+        query = mock_client_cls.return_value.query_day_ahead_prices
+        query.side_effect = _http_error(503)
+        with pytest.raises(EntsoeFetchError):
+            fetch_entsoe_prices("dummy-key", pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-02"))
+
+    assert query.call_count == len(ENTSOE_RETRY_DELAYS) + 1
+    assert [c.args[0] for c in mock_sleep.call_args_list] == list(ENTSOE_RETRY_DELAYS)
+
+
+def test_fetch_entsoe_prices_does_not_retry_auth_errors():
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls, \
+            patch("data_loader.time.sleep"):
+        query = mock_client_cls.return_value.query_day_ahead_prices
+        query.side_effect = _http_error(401)
+        with pytest.raises(EntsoeFetchError):
+            fetch_entsoe_prices("dummy-key", pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-02"))
+
+    assert query.call_count == 1
+
+
+def test_fetch_entsoe_prices_succeeds_after_transient_error():
+    prices = pd.Series(
+        [100.0, 110.0],
+        index=pd.DatetimeIndex(["2025-01-01 00:00", "2025-01-01 01:00"], tz="Europe/Amsterdam"),
+    )
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls, \
+            patch("data_loader.time.sleep"):
+        mock_client_cls.return_value.query_day_ahead_prices.side_effect = [_http_error(503), prices]
+        df = fetch_entsoe_prices("dummy-key", pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-02"))
+
+    assert list(df.columns) == ["timestamp", "day_ahead_price"]
+    assert df["day_ahead_price"].tolist() == [100.0, 110.0]
+    assert df["timestamp"].dt.tz is None
 
 def test_homewizard_auto_detect(tmp_path):
     # Create a dummy HomeWizard CSV
