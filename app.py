@@ -64,6 +64,57 @@ def get_duration_conv(df):
         duration_hours = 0.25
     return 1.0 / duration_hours
 
+PLOT_CONFIG = {
+    "displaylogo": False,
+    "displayModeBar": True,
+    "toImageButtonOptions": {"format": "png", "scale": 3, "filename": "battwatt_grafiek"},
+}
+
+
+def _style_figure(fig, height=500):
+    """Large, copy-friendly typography and a white background so a screenshot or
+    PNG export stays legible when pasted into a document."""
+    fig.update_layout(
+        height=height,
+        template="plotly_white",
+        font=dict(size=16),
+        title_font=dict(size=18),
+        legend=dict(font=dict(size=15)),
+        margin=dict(l=70, r=70, t=90, b=70),
+    )
+    fig.update_xaxes(tickfont=dict(size=15), title_font=dict(size=16))
+    fig.update_yaxes(tickfont=dict(size=15), title_font=dict(size=16))
+    return fig
+
+
+def _csv_bytes(df, index=False):
+    """Semicolon-separated with decimal comma and BOM: opens directly in Dutch Excel."""
+    return df.to_csv(index=index, sep=";", decimal=",").encode("utf-8-sig")
+
+
+def _download_csv(df, label, filename, key, index=False):
+    st.download_button(label, _csv_bytes(df, index=index), file_name=filename,
+                       mime="text/csv", key=key)
+
+
+def _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed):
+    """Plain-table version of the unified Kostenopbouw, for copy/export."""
+    rows = [r for r in _breakdown_row_defs(breakdown_baseline) if include_fixed or not r[4]]
+    out = []
+    for label, key, is_credit, _vol, _fixed, tarief in rows:
+        sign = -1 if is_credit else 1
+        row = {"Post": label, "Tarief": tarief,
+               "Zonder batterij (€)": round(sign * breakdown_baseline[key], 2)}
+        for res in all_results:
+            row[f"{res['label']} (€)"] = round(sign * res['breakdown_simulated'][key], 2)
+        out.append(row)
+    total = {"Post": "Totaal", "Tarief": "", "Zonder batterij (€)": round(display_baseline, 2)}
+    for res, dc in zip(all_results, display_costs):
+        total[f"{res['label']} (€)"] = round(dc, 2)
+    out.append(total)
+    return pd.DataFrame(out)
+
+
 def create_usage_chart(df, title="Verbruik vs Batterij Status"):
     conv = get_duration_conv(df)
     fig = go.Figure()
@@ -83,10 +134,9 @@ def create_usage_chart(df, title="Verbruik vs Batterij Status"):
         yaxis=dict(title="Vermogen (kW)", side="left"),
         yaxis2=dict(title="Batterij SoC (%)", side="right", overlaying="y", showgrid=False, range=[0, 105]),
         legend=dict(x=0, y=1.1, orientation="h"),
-        height=400,
         hovermode="x unified"
     )
-    return fig
+    return _style_figure(fig, height=500)
 
 def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
     fig = go.Figure()
@@ -103,10 +153,9 @@ def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
         yaxis=dict(title="SoC (kWh)", side="left"),
         yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
         legend=dict(x=0, y=1.1, orientation="h"),
-        height=400,
         hovermode="x unified"
     )
-    return fig
+    return _style_figure(fig, height=500)
 
 # ── Battery configuration helpers ────────────────────────────────────────────
 
@@ -235,6 +284,12 @@ def _render_unified_breakdown(all_results, display_baseline, display_costs, brea
             diff_html = f"<span style='color:red'>▲ € {abs(diff):,.2f}</span>"
         total_cols[i + 2].markdown(f"**€ {dc:,.2f}** {diff_html}", unsafe_allow_html=True)
 
+    table_df = _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed)
+    with st.expander("📋 Kostenopbouw als tabel (kopiëren / exporteren)"):
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        _download_csv(table_df, "⬇️ Download kostenopbouw (CSV)", "battwatt_kostenopbouw.csv",
+                      key="breakdown_csv")
+
 
 # ── Per-battery results renderer ──────────────────────────────────────────────
 
@@ -361,14 +416,16 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
                                    if available_seasons
                                    else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
                         slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_price_{i}")
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
         else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, key=f"{key_prefix}_price")
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
 
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
+        _download_csv(result.df, "⬇️ Download volledige simulatiedata (CSV)",
+                      "battwatt_simulatiedata.csv", key=f"{key_prefix}_raw_csv")
 
 
 # ── Battery-size sweep renderer ────────────────────────────────────────────────
@@ -410,13 +467,12 @@ def _build_single_metric_chart(rows, metric_key, title, color, fill_rgba):
         ),
     ))
     fig.update_layout(
-        title=f"{title} (band = 80-95% rendement, lijn = 90%)",
+        title=title,
         xaxis=dict(title="Batterijgrootte (kWh)", tickvals=SWEEP_SIZES_KWH),
         yaxis=dict(title="€ per jaar"),
-        height=350,
         hovermode="x unified",
     )
-    return fig
+    return _style_figure(fig, height=550)
 
 
 def _build_sweep_charts(rows, include_fixed):
@@ -497,8 +553,12 @@ def _render_sweep_results(sweep_data):
     )
 
     cost_fig, savings_fig = _build_sweep_charts(rows, include_fixed_sweep)
-    st.plotly_chart(cost_fig, use_container_width=True)
-    st.plotly_chart(savings_fig, use_container_width=True)
+    st.caption("Band = 80–95% rendement, lijn = 90%. Gebruik het camera-icoon rechtsboven in een grafiek om hem als PNG op te slaan.")
+    col_cost, col_savings = st.columns(2)
+    with col_cost:
+        st.plotly_chart(cost_fig, use_container_width=True, config=PLOT_CONFIG)
+    with col_savings:
+        st.plotly_chart(savings_fig, use_container_width=True, config=PLOT_CONFIG)
 
     st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
 
@@ -513,6 +573,8 @@ def _render_sweep_results(sweep_data):
             "Batterij cycli": round(getattr(r['result'], 'total_cycles', 0.0), 1),
         } for r in rows])
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        _download_csv(summary_df, "⬇️ Download tabel (CSV)", "battwatt_batterijgrootte_vergelijking.csv",
+                      key="sweep_summary_csv")
 
         for r in rows:
             with st.expander(f"{r['size_kwh']} kWh @ {r['efficiency']:.0%} rendement", expanded=False):
@@ -1285,11 +1347,11 @@ elif 'simulation_result' in st.session_state:
                                    if available_seasons
                                    else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
                         slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_price_{i}")
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
         else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, key=f"{key_prefix}_price")
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
 
         if pos < len(selected_indices) - 1:
             st.divider()
@@ -1301,8 +1363,12 @@ elif 'simulation_result' in st.session_state:
             for tab, res in zip(raw_tabs, all_results):
                 with tab:
                     st.dataframe(res['result'].df.head(100))
+                    _download_csv(res['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
+                                  "battwatt_simulatiedata.csv", key=f"raw_csv_{res['label']}")
         else:
             st.dataframe(all_results[0]['result'].df.head(100))
+            _download_csv(all_results[0]['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
+                          "battwatt_simulatiedata.csv", key="raw_csv_single")
 
 elif not uploaded_meter:
     st.info("👈 Upload je kwartiergegevens (P1-metergegevens per 15 minuten) in de zijbalk om de berekening te starten.")
