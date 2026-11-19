@@ -46,6 +46,25 @@ def test_homewizard_auto_detect(tmp_path):
     assert "teruglevering" in df.columns
     assert df.iloc[1]["verbruik"] == pytest.approx(0.7)  # (100.5-100) + (50.2-50)
 
+def test_homewizard_apostrophe_prefixed_negatives(tmp_path):
+    # Newer HomeWizard exports prefix negative phase powers with an apostrophe
+    # ("'-30") as spreadsheet formula-injection protection.
+    csv_path = tmp_path / "homewizard_quoted.csv"
+    csv_path.write_text(
+        "time,Import T1 kWh,Import T2 kWh,Export T1 kWh,Export T2 kWh,L1 max W,L2 max W,L3 max W\n"
+        "2025-01-02 09:30,100.000,50.000,10.000,5.000,129,30,373\n"
+        "2025-01-02 09:45,100.100,50.000,10.000,5.000,129,'-30,373\n"
+        "2025-01-02 10:00,100.200,50.000,10.000,5.050,'-133,'-212,134\n"
+    )
+
+    df, checks = SmartLoader.load_with_checks(csv_path)
+
+    assert len(df) == 3
+    assert df.iloc[1]["verbruik"] == pytest.approx(0.1)
+    assert df.iloc[2]["teruglevering"] == pytest.approx(0.05)
+    assert all(c.passed for c in checks)
+
+
 def test_generic_mapped_loader_with_json(tmp_path):
     # Create a custom CSV
     csv_path = tmp_path / "custom.csv"

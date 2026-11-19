@@ -152,6 +152,15 @@ class HomeWizardLoader(MeterDataLoader):
         df = pd.read_csv(path)
         df["timestamp"] = pd.to_datetime(df["time"], errors="coerce")
 
+        # HomeWizard exports negative values (e.g. per-phase solar export in
+        # "L1 max W") with a leading apostrophe ("'-30") to stop spreadsheets
+        # from interpreting them as formulas. Strip it and coerce to numbers.
+        for col in df.columns.drop(["time", "timestamp"]):
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.lstrip("'"), errors="coerce"
+                )
+
         t1_imp = df.get("Import T1 kWh", 0)
         t2_imp = df.get("Import T2 kWh", 0)
         t1_exp = df.get("Export T1 kWh", 0)
