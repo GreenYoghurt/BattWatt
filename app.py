@@ -11,6 +11,7 @@ from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
+from error_reporting import report_upload_error
 import base64
 import time
 
@@ -596,6 +597,12 @@ try:
 except Exception:
     SMP_API_KEY_DEFAULT = None
 
+# Optional: webhook for privacy-safe alerts on failed uploads (see error_reporting.py)
+try:
+    ALERT_WEBHOOK_URL = st.secrets["ALERT_WEBHOOK_URL"]
+except Exception:
+    ALERT_WEBHOOK_URL = None
+
 # ── Page header ───────────────────────────────────────────────────────────────
 
 st.title("🔋 Jort's app: Thuisbatterij Evaluator")
@@ -640,7 +647,10 @@ st.markdown(
         <details>
             <summary><span class="bw-icon">?</span></summary>
             <div class="bw-tooltip">
-                Alle uploads en berekeningen blijven binnen uw sessie. Deze app wordt gehost op
+                Alle uploads en berekeningen blijven binnen uw sessie. Als het inlezen van een
+                bestand mislukt, ontvangt de beheerder een foutmelding met alleen de structuur
+                van het bestand (kolomnamen en gemaskeerde waardepatronen, zoals <code>'-99</code>) —
+                nooit uw meetwaarden, tijdstippen of bestandsnaam. Deze app wordt gehost op
                 Streamlit Community Cloud — zie het
                 <a href="https://streamlit.io/privacy-policy" target="_blank" rel="noopener">Streamlit privacybeleid</a>
                 voor meer informatie.
@@ -1158,7 +1168,22 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         else:
             meter_df, data_checks = st.session_state["smp_meter_df"], []
     except Exception as e:
+        notified = False
+        # Only alert on auto-detected uploads: a failing custom mapping is a
+        # user configuration issue, not a format change. Send each distinct
+        # failure once per session so repeated clicks don't spam the maintainer.
+        if meter_source == "Bestand upload" and not custom_mapping:
+            alert_key = (type(e).__name__, getattr(uploaded_meter, "file_id", None))
+            sent = st.session_state.setdefault("upload_alerts_sent", set())
+            if alert_key in sent:
+                notified = True
+            elif report_upload_error(e, uploaded_meter, ALERT_WEBHOOK_URL):
+                sent.add(alert_key)
+                notified = True
         st.error(f"Fout bij inlezen meterdata: {e}")
+        if notified:
+            st.caption("De beheerder van deze app is automatisch op de hoogte gebracht "
+                       "(zonder je meetgegevens).")
         st.stop()
 
     failed_checks = [c for c in data_checks if not c.passed]

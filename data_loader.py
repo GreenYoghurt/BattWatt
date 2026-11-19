@@ -9,6 +9,26 @@ import io
 import re
 
 
+class UnexpectedValueError(ValueError):
+    """A recognised meter-data column contains values that can't be parsed as numbers.
+
+    Usually means the exporting app (e.g. HomeWizard) changed its CSV format.
+    `examples` holds a few raw offending cell values, for showing to the user
+    who uploaded the file. Never send them anywhere: use
+    `error_reporting.mask_value()` first.
+    """
+
+    def __init__(self, column: str, examples: List[str], count: int):
+        self.column = column
+        self.examples = examples
+        self.count = count
+        shown = ", ".join(repr(v) for v in examples)
+        super().__init__(
+            f"Kolom '{column}' bevat {count} onverwachte waarde(n), bijvoorbeeld {shown}. "
+            "Mogelijk is het exportformaat van je meter-app gewijzigd."
+        )
+
+
 def _redact_security_token(message: str) -> str:
     """Strip ENTSO-E securityToken values (they appear in request-URL text embedded in errors raised by the underlying HTTP client)."""
     return re.sub(r"(securityToken=)[^&\s]+", r"\1***REDACTED***", message)
@@ -157,9 +177,16 @@ class HomeWizardLoader(MeterDataLoader):
         # from interpreting them as formulas. Strip it and coerce to numbers.
         for col in df.columns.drop(["time", "timestamp"]):
             if not pd.api.types.is_numeric_dtype(df[col]):
+                original = df[col]
                 df[col] = pd.to_numeric(
-                    df[col].astype(str).str.lstrip("'"), errors="coerce"
+                    original.astype(str).str.strip().str.lstrip("'"), errors="coerce"
                 )
+                # Anything that still isn't a number means the export format
+                # changed in a way we don't know yet: fail loudly instead of
+                # silently turning values into NaN.
+                bad = original[original.notna() & df[col].isna()]
+                if not bad.empty:
+                    raise UnexpectedValueError(col, bad.astype(str).unique()[:3].tolist(), len(bad))
 
         t1_imp = df.get("Import T1 kWh", 0)
         t2_imp = df.get("Import T2 kWh", 0)
