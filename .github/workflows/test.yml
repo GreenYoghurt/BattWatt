@@ -3,6 +3,9 @@ name: Python Tests
 on:
   pull_request:
     branches: [ main, dev ]
+    # ready_for_review: draft PRs opened by the upload failure agent use
+    # GITHUB_TOKEN, which doesn't trigger CI; marking them ready does.
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 jobs:
   test:

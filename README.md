@@ -69,14 +69,32 @@ streamlit run app.py
 4. An ENTSO-E API key must be set in `.streamlit/secrets.toml` (as `ENTSOE_API_KEY`) for automated price fetching — the **🚀 Start Simulatie** button is disabled without it. A `SLIMMEMETERPORTAL_API_KEY` secret can also be set to pre-fill the SlimmeMeterPortal API key field.
 5. Click **🚀 Start Simulatie** and review the results overview, cost breakdown, and interactive charts.
 
-#### Upload failure alerts (optional)
+#### Failure alerts and the fix agent (optional)
 
-Set an `ALERT_WEBHOOK_URL` secret to be notified whenever an auto-detected upload fails to load — typically because a meter app (e.g. HomeWizard) changed its export format. Supported targets:
+When an upload, the ENTSO-E price fetch or the SlimmeMeterPortal API fails, the app triages the failure (`error_reporting.py`):
 
-- **ntfy** (recommended): `ALERT_WEBHOOK_URL = "https://ntfy.sh/<long-random-topic>"`, then subscribe to that topic in the ntfy app for push notifications. ntfy topics are public to anyone who knows the name, so use a long random one.
-- **Discord** webhook URL, or a **Slack** incoming-webhook URL.
+| Triage | Examples | Action |
+|---|---|---|
+| **fix** | unparseable values in a recognised format, crash in a known loader, unrecognised file with meter-like headers, unexpected API error/response | notify + open a GitHub issue for the agent |
+| **outage** | timeout, connection error, HTTP 5xx, rate limit | notify only; escalated to **fix** if the same failure persists for 24 h |
+| **config** | our ENTSO-E key rejected | notify only |
+| **ignore** | random files, a user's own wrong API key, no price data for the period | nothing |
 
-Alerts contain only the file's structure: extension, size, detected loader, column names, and masked value patterns (every digit becomes `9`, every letter `x`, e.g. `'-30` → `'-99`). Meter readings, timestamps and the file name are never sent. See `error_reporting.py`.
+Abuse limits (in memory, shared across sessions): each file (content hash) and each distinct failure is reported once per 24 h, and each IP address at most 3 times per 24 h (only a salted hash of the IP is kept).
+
+Alerts contain only the file's structure: extension, size, detected loader, sanitised column names, and masked value patterns (every digit becomes `9`, every letter `x`, e.g. `'-30` → `'-99`). Meter readings, timestamps, file names and IP addresses are never sent.
+
+**Notifications.** Set `ALERT_WEBHOOK_URL`:
+- **ntfy** (recommended): `"https://ntfy.sh/<long-random-topic>"`, then subscribe to that topic in the ntfy app. Topics are public to anyone who knows the name, so use a long random one.
+- a **Discord** webhook URL, or a **Slack** incoming-webhook URL.
+
+**Fix agent.** For **fix** failures the app opens an issue labelled `upload-failure` (one per distinct failure while it's open). `.github/workflows/upload-failure-agent.yml` then runs Claude, which first decides FIX / IGNORE / WAIT. IGNORE and WAIT close the issue with an explanation; FIX with a passing test suite opens a **draft PR** for review. At most 2 agent runs per day. Setup:
+1. Streamlit secrets: `GITHUB_ISSUE_TOKEN` = a fine-grained personal access token for this repository only, with *Issues: read and write*. Optionally `GITHUB_REPO` (default `GreenYoghurt/BattWatt`).
+2. Repository secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`; uses your Claude subscription), and the Claude GitHub App installed on the repository.
+3. Repository settings → Actions → General → enable *Allow GitHub Actions to create and approve pull requests*.
+4. Create the `upload-failure` label (the workflow creates `agent-run` itself).
+
+PRs opened by the workflow don't trigger CI automatically; marking the draft *Ready for review* does.
 
 ### CLI / Scripting
 For developers, you can use the simulation engine directly:

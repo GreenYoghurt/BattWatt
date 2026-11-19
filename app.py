@@ -11,7 +11,7 @@ from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
-from error_reporting import report_upload_error
+from error_reporting import AlertLimiter, AlertSettings, report_failure
 import base64
 import time
 
@@ -597,11 +597,46 @@ try:
 except Exception:
     SMP_API_KEY_DEFAULT = None
 
-# Optional: webhook for privacy-safe alerts on failed uploads (see error_reporting.py)
-try:
-    ALERT_WEBHOOK_URL = st.secrets["ALERT_WEBHOOK_URL"]
-except Exception:
-    ALERT_WEBHOOK_URL = None
+# Optional: privacy-safe failure alerts and agent issues (see error_reporting.py)
+def _secret(name, default=None):
+    try:
+        return st.secrets[name]
+    except Exception:
+        return default
+
+
+ALERT_SETTINGS = AlertSettings(
+    webhook_url=_secret("ALERT_WEBHOOK_URL"),
+    github_token=_secret("GITHUB_ISSUE_TOKEN"),
+    github_repo=_secret("GITHUB_REPO", "GreenYoghurt/BattWatt"),
+)
+
+
+@st.cache_resource
+def _alert_limiter():
+    """One limiter for all sessions, so limits hold across users and reruns."""
+    return AlertLimiter()
+
+
+def _report_failure(error, source, upload=None):
+    """Triage and report a failure; returns True if the maintainer knows about it.
+
+    Remembered per session, so repeated clicks keep showing the notice while
+    the limiter prevents duplicate alerts.
+    """
+    key = (source, type(error).__name__, getattr(upload, "file_id", None))
+    known = st.session_state.setdefault("reported_failures", {})
+    if key not in known:
+        try:
+            ip = st.context.ip_address
+        except Exception:
+            ip = None
+        known[key] = report_failure(error, source=source, settings=ALERT_SETTINGS,
+                                    upload=upload, limiter=_alert_limiter(), ip=ip)
+    return known[key]
+
+
+_NOTIFIED_MSG = "De beheerder van deze app is automatisch op de hoogte gebracht (zonder je meetgegevens)."
 
 # ── Page header ───────────────────────────────────────────────────────────────
 
@@ -650,7 +685,9 @@ st.markdown(
                 Alle uploads en berekeningen blijven binnen uw sessie. Als het inlezen van een
                 bestand mislukt, ontvangt de beheerder een foutmelding met alleen de structuur
                 van het bestand (kolomnamen en gemaskeerde waardepatronen, zoals <code>'-99</code>) —
-                nooit uw meetwaarden, tijdstippen of bestandsnaam. Deze app wordt gehost op
+                nooit uw meetwaarden, tijdstippen of bestandsnaam. Om misbruik te beperken wordt
+                een onherleidbare hash van uw IP-adres tijdelijk in het geheugen bijgehouden; die
+                wordt nergens opgeslagen of verstuurd. Deze app wordt gehost op
                 Streamlit Community Cloud — zie het
                 <a href="https://streamlit.io/privacy-policy" target="_blank" rel="noopener">Streamlit privacybeleid</a>
                 voor meer informatie.
@@ -750,9 +787,13 @@ else:  # SlimmeMeterPortal API
         try:
             client = SlimmeMeterPortalClient(api_key=smp_api_key)
             st.session_state["smp_connections"] = client.get_connections()
-        except SlimmeMeterPortalError as e:
+        except Exception as e:
+            # Exception, not just SlimmeMeterPortalError: network failures
+            # (requests.ConnectionError/Timeout) used to crash with a traceback.
             st.session_state.pop("smp_connections", None)
             st.sidebar.error(f"Fout bij ophalen aansluitingen: {e}")
+            if _report_failure(e, "slimmemeterportal"):
+                st.sidebar.caption(_NOTIFIED_MSG)
 
     connections = st.session_state.get("smp_connections")
     if connections:
@@ -784,10 +825,12 @@ else:  # SlimmeMeterPortal API
                     usages = flatten_usage_range(day_responses)
                     st.session_state["smp_meter_df"] = SlimmeMeterPortalAPILoader().load_usages(usages)
                     st.session_state["smp_missing_dates"] = find_missing_dates(dates, day_responses)
-                except (SlimmeMeterPortalError, ValueError) as e:
+                except Exception as e:
                     st.session_state.pop("smp_meter_df", None)
                     st.session_state.pop("smp_missing_dates", None)
                     st.sidebar.error(f"Fout bij ophalen data: {e}")
+                    if _report_failure(e, "slimmemeterportal"):
+                        st.sidebar.caption(_NOTIFIED_MSG)
                 finally:
                     progress_bar.empty()
 
@@ -1002,6 +1045,8 @@ def _prepare_simulation_data(meter_df):
         price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
     except Exception as e:
         st.error(f"Fout bij ophalen prijzen: {e}")
+        if _report_failure(e, "entsoe"):
+            st.caption(_NOTIFIED_MSG)
         st.stop()
 
     st.write("Data samenvoegen...")
@@ -1168,22 +1213,13 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         else:
             meter_df, data_checks = st.session_state["smp_meter_df"], []
     except Exception as e:
-        notified = False
-        # Only alert on auto-detected uploads: a failing custom mapping is a
-        # user configuration issue, not a format change. Send each distinct
-        # failure once per session so repeated clicks don't spam the maintainer.
-        if meter_source == "Bestand upload" and not custom_mapping:
-            alert_key = (type(e).__name__, getattr(uploaded_meter, "file_id", None))
-            sent = st.session_state.setdefault("upload_alerts_sent", set())
-            if alert_key in sent:
-                notified = True
-            elif report_upload_error(e, uploaded_meter, ALERT_WEBHOOK_URL):
-                sent.add(alert_key)
-                notified = True
+        # Only report auto-detected uploads: a failing custom mapping is a
+        # user configuration issue, not a format change.
+        notified = (meter_source == "Bestand upload" and not custom_mapping
+                    and _report_failure(e, "upload", uploaded_meter))
         st.error(f"Fout bij inlezen meterdata: {e}")
         if notified:
-            st.caption("De beheerder van deze app is automatisch op de hoogte gebracht "
-                       "(zonder je meetgegevens).")
+            st.caption(_NOTIFIED_MSG)
         st.stop()
 
     failed_checks = [c for c in data_checks if not c.passed]
