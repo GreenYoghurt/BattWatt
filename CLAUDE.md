@@ -60,6 +60,8 @@ This distinction is the most financially significant correctness constraint in t
 
 **`data_checks.py` — pre-simulation data quality checks.** `DataCheck` subclasses inspect the *raw* (pre-`validate()`) loader output and return an optional `CheckResult` (severity + message); `run_checks()` runs the registry. `app.py` surfaces failed checks as warnings the user must explicitly acknowledge before simulating. Only loaders that implement `get_raw_df()` (currently `HomeWizardLoader`) participate.
 
+**`error_reporting.py` — privacy-safe upload failure alerts.** When an auto-detected upload fails, `app.py` calls `report_upload_error()`, which posts a description of the file's *structure* (column names, masked value patterns, detected loader) to the optional `ALERT_WEBHOOK_URL` secret (ntfy/Discord/Slack). It must never send meter values, timestamps or file names — `tests/test_error_reporting.py` enforces this. Loaders raise `data_loader.UnexpectedValueError` when a recognised column has unparseable values, so format changes fail loudly instead of becoming NaN.
+
 **`models.py`** — `SimulationResult` dataclass that carries both the timestep DataFrame (`df`) and aggregate totals.
 
 **`app.py` — Streamlit UI.** Lets the user configure meter data source, one or more battery configs, provider fees, and strategy, then runs the baseline plus each battery simulation sequentially and renders a unified cost-breakdown comparison and per-battery charts. Not part of the core simulation pipeline — treat it as a consumer of `SmartLoader`/`Simulator`/`BillingEngine`, not a place to add simulation logic.

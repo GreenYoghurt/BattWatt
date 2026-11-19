@@ -69,6 +69,15 @@ streamlit run app.py
 4. An ENTSO-E API key must be set in `.streamlit/secrets.toml` (as `ENTSOE_API_KEY`) for automated price fetching — the **🚀 Start Simulatie** button is disabled without it. A `SLIMMEMETERPORTAL_API_KEY` secret can also be set to pre-fill the SlimmeMeterPortal API key field.
 5. Click **🚀 Start Simulatie** and review the results overview, cost breakdown, and interactive charts.
 
+#### Upload failure alerts (optional)
+
+Set an `ALERT_WEBHOOK_URL` secret to be notified whenever an auto-detected upload fails to load — typically because a meter app (e.g. HomeWizard) changed its export format. Supported targets:
+
+- **ntfy** (recommended): `ALERT_WEBHOOK_URL = "https://ntfy.sh/<long-random-topic>"`, then subscribe to that topic in the ntfy app for push notifications. ntfy topics are public to anyone who knows the name, so use a long random one.
+- **Discord** webhook URL, or a **Slack** incoming-webhook URL.
+
+Alerts contain only the file's structure: extension, size, detected loader, column names, and masked value patterns (every digit becomes `9`, every letter `x`, e.g. `'-30` → `'-99`). Meter readings, timestamps and the file name are never sent. See `error_reporting.py`.
+
 ### CLI / Scripting
 For developers, you can use the simulation engine directly:
 ```powershell
