@@ -80,7 +80,9 @@ When an upload, the ENTSO-E price fetch or the SlimmeMeterPortal API fails, the 
 | **config** | our ENTSO-E key rejected | notify only |
 | **ignore** | random files, a user's own wrong API key, no price data for the period | nothing |
 
-Abuse limits (in memory, shared across sessions): each file (content hash) and each distinct failure is reported once per 24 h, and each IP address at most 3 times per 24 h (only a salted hash of the IP is kept).
+Reporting is isolated from the app: it runs on a background worker (the page never waits for ntfy or GitHub), and if the reporting module itself is broken the app simply runs without alerts.
+
+Abuse limits (in memory, shared across sessions, expired entries are pruned): each file (content hash) and each distinct failure is reported once per 24 h, and each IP address at most 3 times per 24 h (only a salted hash of the IP is kept).
 
 Alerts contain only the file's structure: extension, size, detected loader, sanitised column names, and masked value patterns (every digit becomes `9`, every letter `x`, e.g. `'-30` → `'-99`). Meter readings, timestamps, file names and IP addresses are never sent.
 
