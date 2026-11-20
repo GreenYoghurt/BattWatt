@@ -3,6 +3,7 @@
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -12,13 +13,16 @@ import error_reporting
 from error_reporting import AlertSettings, submit_report, wait_for_reports
 
 CONFIGURED = AlertSettings(webhook_url="https://ntfy.sh/t")
+# Absolute: newer Streamlit resolves relative AppTest paths against the test
+# file (tests/), older versions against the working directory.
+APP_PATH = str(Path(__file__).resolve().parents[1] / "app.py")
 
 
 def test_app_starts_when_error_reporting_cannot_be_imported(monkeypatch):
     # None in sys.modules makes `import error_reporting` raise ImportError,
     # as a syntax error or missing dependency in that module would.
     monkeypatch.setitem(sys.modules, "error_reporting", None)
-    at = AppTest.from_file("app.py", default_timeout=120).run()
+    at = AppTest.from_file(APP_PATH, default_timeout=120).run()
     assert not at.exception
     assert "Thuisbatterij Evaluator" in at.title[0].value
 
