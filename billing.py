@@ -102,3 +102,51 @@ class BillingEngine:
         )
 
         return cost_baseline - cost_simulated
+
+
+def fixed_costs_from_breakdown(breakdown: dict) -> float:
+    """Fixed annual part of a bill breakdown: abonnement + netbeheer − belastingvermindering."""
+    return (breakdown["abonnementskosten"]
+            + breakdown["netbeheerskosten"]
+            - breakdown["belastingvermindering"])
+
+
+def compare_providers(providers, baseline_result: SimulationResult, simulated_results,
+                      dso: str = "Enexis", year: int = 2025) -> list:
+    """Bills the same baseline and battery simulations under several providers.
+
+    The battery dispatch is computed once (by the caller) and reused for every
+    provider: only the billing differs. Returns one dict per provider, in the
+    order given, with the baseline bill and, per simulated result (same order
+    as ``simulated_results``), the bill with battery and the savings. Every
+    amount is given both including (``cost_*``) and excluding (``*_variable``)
+    the fixed annual costs; savings are the same either way, because the fixed
+    costs of one provider are identical with and without a battery.
+    """
+    comparison = []
+    for provider in providers:
+        engine = BillingEngine(provider, dso=dso, year=year)
+        bd_base = engine.calculate_bill_breakdown(baseline_result)
+        cost_base = bd_base["total"]
+        cost_base_var = cost_base - fixed_costs_from_breakdown(bd_base)
+
+        results = []
+        for result in simulated_results:
+            bd = engine.calculate_bill_breakdown(result)
+            cost = bd["total"]
+            results.append({
+                "cost_total": cost,
+                "cost_variable": cost - fixed_costs_from_breakdown(bd),
+                "savings": cost_base - cost,
+                "breakdown": bd,
+            })
+
+        comparison.append({
+            "name": provider.name,
+            "contract_type": provider.contract_type,
+            "cost_baseline": cost_base,
+            "cost_baseline_variable": cost_base_var,
+            "breakdown_baseline": bd_base,
+            "results": results,
+        })
+    return comparison

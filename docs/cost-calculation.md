@@ -140,6 +140,47 @@ in the loop. Each simulated bill uses the same formulas but with the battery-adj
 [Optimization & control](optimization-and-control.md)). Savings are simply
 `baseline_bill − simulated_bill`.
 
+## Comparing energy providers
+
+In the sidebar's "💶 Energieleverancier" section you can add more than one contract
+("➕ Leverancier toevoegen"), each with its own name, contract type (dynamic or fixed), fixed
+delivery costs per year, and either the supplier mark-ups (dynamic) or the normaal-/daltarief and
+terugleververgoeding (fixed). Every provider is billed with exactly the formulas above.
+
+**The battery is simulated once, not once per provider.** The baseline and every battery
+simulation produce one `SimulationResult` each; `billing.compare_providers()` then bills those same
+results under every provider (a `BillingEngine` per provider). What the battery does therefore
+does not depend on which provider you look at:
+
+- **PV Prioriteit** never looks at prices or fees, so its dispatch is the same for every contract
+  anyway.
+- **Kosten Optimaal (MPC)** does use the provider: `Controller_MPC` adds `buying_fee`,
+  `selling_fee` and the energy tax to the day-ahead price in its objective. With several
+  providers, **Leverancier 1 (the first one in the list) drives the MPC dispatch**, and the other
+  providers are billed on that same dispatch. For a provider with different mark-ups an
+  optimizer tuned to that provider could do slightly better, so the comparison slightly favours
+  Leverancier 1 under MPC. Leverancier 1 also decides which strategies are offered: if it is a
+  fixed contract, only PV Prioriteit is available.
+
+Per provider, `compare_providers()` returns the bill without battery, the bill with each battery,
+and `savings = bill_without_battery − bill_with_battery` **within that provider**. All amounts
+come both including and excluding the fixed annual costs; the savings are the same either way,
+because one provider's fixed costs are identical with and without a battery.
+
+In the app, Leverancier 1 is still the one shown in the existing overview and Kostenopbouw (so
+with a single provider nothing changes). With two or more providers an extra "Vergelijking
+energieleveranciers" section appears:
+
+- **Handmatige batterijen:** grouped bar charts of yearly cost (without battery and with each
+  battery) and of savings per provider, plus a table with the same numbers (CSV download).
+- **Batterijgrootte vergelijking:** the existing size charts stay for Leverancier 1; the comparison
+  section adds one line per provider for yearly cost (0 kWh = no battery) and savings versus
+  battery size at 90% efficiency, plus a table with every provider × size × efficiency
+  combination (CSV download).
+
+Both also name the cheapest provider/battery combination. The "Vaste kosten meenemen" toggle
+applies to the comparison too.
+
 ## Where the constants live
 
 `energy_providers.py` hardcodes 2025 tariffs and a small set of DSOs (Enexis, Liander, Stedin,
