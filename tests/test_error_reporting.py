@@ -253,6 +253,17 @@ def test_issue_created_with_label_and_signature():
     assert "abc123" in payload["body"]
 
 
+def test_issue_title_keeps_brackets():
+    # Regression: the whole title used to be sanitised, turning "[upload]" into "?upload?".
+    settings = AlertSettings(github_token="tok", github_repo="o/r")
+    get, post = _issue_mocks([])
+    up = _unknown_format_upload()
+    with patch("error_reporting.requests.get", get), patch("error_reporting.requests.post", post):
+        report_failure(_load_error(up), source="upload", settings=settings, upload=up)
+    title = post.call_args.kwargs["json"]["title"]
+    assert title.startswith("[upload] UnexpectedValueError (")
+
+
 def test_report_failure_only_fix_opens_issue():
     settings = AlertSettings(webhook_url="https://ntfy.sh/t", github_token="tok", github_repo="o/r")
     get, post = _issue_mocks([])

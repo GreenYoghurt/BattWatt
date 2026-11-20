@@ -420,7 +420,8 @@ def report_failure(error: BaseException, *, source: str, settings: AlertSettings
         title = f"BattWatt {source} failure: {category}"
         notified = send_alert(settings.webhook_url, text, title)
         if category == FIX:
-            issue_title = _sanitize_text(f"[{source}] {type(error).__name__} ({signature})", 120)
+            # Sanitise only the parts that aren't ours: the brackets are fixed text.
+            issue_title = f"[{_sanitize_text(source, 30)}] {_sanitize_text(type(error).__name__, 60)} ({signature})"
             issue_url = create_issue_if_new(settings.github_token, settings.github_repo, signature, issue_title, text)
             notified = notified or issue_url is not None
         return notified
