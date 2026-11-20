@@ -39,11 +39,12 @@ class FakeUpload(io.BytesIO):
 
 
 def _unknown_format_upload(name="Fuikweg 12 meterdata.csv"):
-    # A hypothetical future export: negatives written as "(30)" instead of "'-30"
+    # A value no numeric format could mean: "n.v.t." (Dutch "not applicable"). Deliberately
+    # NOT something like "(30)", which a real export could use for -30 (accounting notation).
     return FakeUpload(
         HEADER
         + "2025-01-02 09:30,27957.929,33283.872,2534.417,5951.063,129,30,373\n"
-        + "2025-01-02 09:45,27958.104,33283.872,2534.417,5951.063,129,(30),373\n",
+        + "2025-01-02 09:45,27958.104,33283.872,2534.417,5951.063,129,n.v.t.,373\n",
         name,
     )
 
@@ -59,7 +60,7 @@ def test_homewizard_unknown_pattern_raises_clear_error():
         SmartLoader.load_with_checks(_unknown_format_upload())
     err = exc_info.value
     assert err.column == "L2 max W"
-    assert err.examples == ["(30)"]
+    assert err.examples == ["n.v.t."]
     assert "exportformaat" in str(err)
 
 
@@ -73,10 +74,10 @@ def test_alert_contains_structure_but_no_data_or_file_name():
     # Useful for diagnosis
     assert "UnexpectedValueError" in text
     assert "L2 max W" in text
-    assert "(99)" in text  # masked pattern of the offending value
+    assert "x.x.x." in text  # masked pattern of the offending value
     assert "HomeWizardLoader" in text
     # Never leaks data or the file name
-    for secret in ["Fuikweg", "27957", "33283", "2025-01-02", "(30)", "129"]:
+    for secret in ["Fuikweg", "27957", "33283", "2025-01-02", "n.v.t.", "129"]:
         assert secret not in text, secret
 
 
@@ -251,6 +252,17 @@ def test_issue_created_with_label_and_signature():
     payload = post.call_args.kwargs["json"]
     assert payload["labels"] == ["upload-failure"]
     assert "abc123" in payload["body"]
+
+
+def test_issue_title_keeps_brackets():
+    # Regression: the whole title used to be sanitised, turning "[upload]" into "?upload?".
+    settings = AlertSettings(github_token="tok", github_repo="o/r")
+    get, post = _issue_mocks([])
+    up = _unknown_format_upload()
+    with patch("error_reporting.requests.get", get), patch("error_reporting.requests.post", post):
+        report_failure(_load_error(up), source="upload", settings=settings, upload=up)
+    title = post.call_args.kwargs["json"]["title"]
+    assert title.startswith("[upload] UnexpectedValueError (")
 
 
 def test_report_failure_only_fix_opens_issue():
