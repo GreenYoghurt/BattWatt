@@ -117,6 +117,10 @@ step-by-step re-solve would decide, since the plan for the full horizon was alre
 If the solver fails, or fewer than two steps remain in the data, the controller falls back to a
 pass-through (`return production, consumption`) — no battery use for that step.
 
+When several energy providers are configured in the app, the battery is still simulated only once:
+`Controller_MPC` receives the **first** provider (Leverancier 1), and the other providers are billed
+on that same dispatch (see [Comparing energy providers](cost-calculation.md#comparing-energy-providers)).
+
 ### Perfect foresight
 
 `Controller_MPC` builds its horizon directly from `self.full_df` — the actual historical

@@ -52,7 +52,7 @@ DataLoader → merge_data() → Simulator(Battery, Controller) → SimulationRes
 
 This distinction is the most financially significant correctness constraint in the codebase.
 
-**`billing.py` — cost accounting.** `BillingEngine` wraps a `Provider` and computes absolute bills and savings by comparing a baseline `SimulationResult` (no battery) against a simulated one.
+**`billing.py` — cost accounting.** `BillingEngine` wraps a `Provider` and computes absolute bills and savings by comparing a baseline `SimulationResult` (no battery) against a simulated one. `compare_providers()` bills the same baseline and battery results under several providers (the app's provider comparison); the battery is simulated once, and with MPC the first provider drives the dispatch.
 
 **`data_loader.py` — ingestion.** `SmartLoader.load()` auto-detects file format among the registered `MeterDataLoader` subclasses (HomeWizard CSV, SlimmeMeterPortal Excel, single-column signed "Kwartierdata" Excel, standard DSO Excel); `SmartLoader.load(path, config=...)` uses `GenericMappedLoader` for a JSON column-mapping config instead. `SmartLoader.load_with_checks()` additionally runs `data_checks.py`'s data-quality checks (see below) and returns `(df, check_results)`. `merge_data()` joins meter data with ENTSO-E price data using nearest-timestamp merge. Raw ENTSO-E prices are in EUR/MWh and must be divided by 1000 before use. `SlimmeMeterPortalAPILoader` is a `MeterDataLoader` that is *not* part of SmartLoader's auto-detection (`can_handle()` always returns `False`) — it's driven explicitly via `load_usages()` on parsed API JSON from `slimmemeterportal_client.py`.
 
