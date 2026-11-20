@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
-from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data, SlimmeMeterPortalAPILoader
+from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data, SlimmeMeterPortalAPILoader, EntsoeFetchError
 from slimmemeterportal_client import SlimmeMeterPortalClient, SlimmeMeterPortalError, flatten_usage_range, find_missing_dates
 from energy_providers import Provider
 from battery import get_battery, Battery
@@ -1314,6 +1314,19 @@ def _format_duration(seconds):
     return f"{secs} sec"
 
 
+# Dutch explanation per EntsoeFetchError.kind; the raw error is only shown as
+# technical detail, since it is a full request URL and unreadable for users.
+PRICE_ERROR_MESSAGES = {
+    "unavailable": "De ENTSO-E prijzendienst is tijdelijk niet beschikbaar (onderhoud of storing). Probeer het later opnieuw.",
+    "timeout": "De ENTSO-E prijzendienst reageert te traag. Probeer het later opnieuw.",
+    "connection": "Geen verbinding met de ENTSO-E prijzendienst. Controleer je internetverbinding en probeer het opnieuw.",
+    "auth": "De ENTSO-E API-key is ongeldig of verlopen. Controleer de sleutel in de app-configuratie.",
+    "rate_limit": "Te veel aanvragen bij ENTSO-E. Wacht een paar minuten en probeer het opnieuw.",
+    "no_data": "ENTSO-E heeft geen prijzen voor deze periode. Controleer de datums in je meetdata.",
+    "bad_request": "ENTSO-E heeft de aanvraag geweigerd (ongeldige periode of parameters).",
+}
+
+
 def _prepare_simulation_data(meter_df):
     """Fetch prices, merge with meter data, and build the no-battery baseline.
     Shared by both the manual and sweep simulation runners. Must be called
@@ -1323,6 +1336,18 @@ def _prepare_simulation_data(meter_df):
     st.write(f"Marktprijzen ophalen via API ({start_date.date()} tot {end_date.date()})...")
     try:
         price_df = fetch_entsoe_prices(ENTSOE_API_KEY, start_date, end_date)
+    except EntsoeFetchError as e:
+        st.error("Fout bij ophalen prijzen: " + PRICE_ERROR_MESSAGES.get(
+            e.kind, "Onbekende fout bij het ophalen van de marktprijzen."
+        ))
+        with st.expander("Technische details"):
+            st.code(str(e))
+        # Every ENTSO-E failure is an EntsoeFetchError, so this branch must
+        # report too, or the generic branch below never runs and alerts stop.
+        # Triage (error_reporting) reads the chained cause: outage/config/fix.
+        if _report_failure(e, "entsoe"):
+            st.caption(_NOTIFIED_MSG)
+        st.stop()
     except Exception as e:
         st.error(f"Fout bij ophalen prijzen: {e}")
         if _report_failure(e, "entsoe"):
