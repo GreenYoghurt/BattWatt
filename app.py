@@ -1342,6 +1342,11 @@ def _prepare_simulation_data(meter_df):
         ))
         with st.expander("Technische details"):
             st.code(str(e))
+        # Every ENTSO-E failure is an EntsoeFetchError, so this branch must
+        # report too, or the generic branch below never runs and alerts stop.
+        # Triage (error_reporting) reads the chained cause: outage/config/fix.
+        if _report_failure(e, "entsoe"):
+            st.caption(_NOTIFIED_MSG)
         st.stop()
     except Exception as e:
         st.error(f"Fout bij ophalen prijzen: {e}")

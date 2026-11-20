@@ -17,6 +17,46 @@ CONFIGURED = AlertSettings(webhook_url="https://ntfy.sh/t")
 # file (tests/), older versions against the working directory.
 APP_PATH = str(Path(__file__).resolve().parents[1] / "app.py")
 
+# Calls into external sources whose failures must reach the alert pipeline.
+EXTERNAL_CALLS = {"fetch_entsoe_prices", "load_with_checks", "get_connections", "get_usage_range"}
+
+
+def _called_names(node):
+    import ast
+
+    names = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f = n.func
+            names.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None))
+    return names
+
+
+def test_every_external_failure_handler_reports():
+    """Each `except` around an external source must call _report_failure.
+
+    Regression guard: a specific handler (e.g. `except EntsoeFetchError`)
+    added before the generic one silently swallowed every ENTSO-E failure,
+    so alerts stopped while all other tests still passed.
+    """
+    import ast
+
+    tree = ast.parse(Path(APP_PATH).read_text(encoding="utf-8"))
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        body_calls = set().union(*(_called_names(s) for s in node.body))
+        if not body_calls & EXTERNAL_CALLS:
+            continue
+        for handler in node.handlers:
+            checked += 1
+            assert "_report_failure" in _called_names(handler), (
+                f"app.py line {handler.lineno}: handler for "
+                f"{sorted(body_calls & EXTERNAL_CALLS)} doesn't call _report_failure"
+            )
+    assert checked >= 5  # upload, 2x SlimmeMeterPortal, 2x ENTSO-E
+
 
 def test_app_starts_when_error_reporting_cannot_be_imported(monkeypatch):
     # None in sys.modules makes `import error_reporting` raise ImportError,

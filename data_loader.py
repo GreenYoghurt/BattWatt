@@ -13,10 +13,12 @@ import time
 
 
 # Seconds to wait before each retry. The ENTSO-E client only retries connection
-# errors itself, so 5xx responses (e.g. the platform's maintenance page) and read
-# timeouts fail on the first attempt unless we retry them here.
-ENTSOE_RETRY_DELAYS = (2, 5)
-ENTSOE_RETRY_KINDS = {"unavailable", "timeout", "connection"}
+# errors itself, so 5xx responses (e.g. the platform's maintenance page) fail on
+# the first attempt unless we retry them here. One retry only: during ENTSO-E
+# maintenance a single request took ~25 s, and the user waits for every attempt.
+# Timeouts are not retried: they already cost ENTSOE_TIMEOUT_SECONDS each.
+ENTSOE_RETRY_DELAYS = (2,)
+ENTSOE_RETRY_KINDS = {"unavailable", "connection"}
 ENTSOE_TIMEOUT_SECONDS = 60
 
 

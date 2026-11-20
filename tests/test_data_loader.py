@@ -84,6 +84,22 @@ def test_fetch_entsoe_prices_does_not_retry_auth_errors():
     assert query.call_count == 1
 
 
+def test_fetch_entsoe_prices_does_not_retry_timeouts():
+    # A timeout already cost ENTSOE_TIMEOUT_SECONDS; retrying would double the wait.
+    import requests
+
+    with patch("data_loader.EntsoePandasClient") as mock_client_cls, \
+            patch("data_loader.time.sleep") as mock_sleep:
+        query = mock_client_cls.return_value.query_day_ahead_prices
+        query.side_effect = requests.ReadTimeout("read timed out")
+        with pytest.raises(EntsoeFetchError) as exc_info:
+            fetch_entsoe_prices("dummy-key", pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-02"))
+
+    assert exc_info.value.kind == "timeout"
+    assert query.call_count == 1
+    mock_sleep.assert_not_called()
+
+
 def test_fetch_entsoe_prices_succeeds_after_transient_error():
     prices = pd.Series(
         [100.0, 110.0],
