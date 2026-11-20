@@ -78,11 +78,11 @@ jobs:
       tests: ${{ steps.result.outputs.tests }}
       has_patch: ${{ steps.result.outputs.has_patch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
@@ -169,7 +169,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: agent-output
           path: ${{ runner.temp }}/out/
@@ -190,11 +190,11 @@ jobs:
       TESTS: ${{ needs.agent.outputs.tests }}
       HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: agent-output
           path: ${{ runner.temp }}/out

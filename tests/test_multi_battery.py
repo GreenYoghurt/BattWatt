@@ -38,7 +38,7 @@ def merged_df():
         "verbruik": consumption,
         "day_ahead_price": prices,
     })
-    df.set_index("timestamp", drop=False, inplace=True)
+    df = df.set_index("timestamp", drop=False)
     return df
 
 

@@ -151,7 +151,7 @@ def _fixed_contract_provider():
 def _classify_dal(rng: pd.DatetimeIndex) -> np.ndarray:
     """Independent re-derivation of the normaal/dal spec (not calling
     get_tariff_period), used to hand-verify the baseline breakdown."""
-    is_weekend = rng.dayofweek >= 5
+    is_weekend = rng.day_of_week >= 5
     is_night = (rng.hour >= 23) | (rng.hour < 7)
     return is_weekend | (~is_weekend & is_night)
 
@@ -169,8 +169,8 @@ def merged_df_two_days():
     # Any Monday works; day 2 lands on Tuesday which is still a weekday, so
     # start on a Friday instead to get one weekday + one full weekend day.
     rng = pd.date_range("2025-06-06", periods=n_per_day * 2, freq="15min")  # Fri 00:00 -> Sun 00:00
-    assert rng[0].dayofweek == 4  # Friday
-    assert rng[n_per_day].dayofweek == 5  # Saturday
+    assert rng[0].day_of_week == 4  # Friday
+    assert rng[n_per_day].day_of_week == 5  # Saturday
 
     df = pd.DataFrame({
         "timestamp": rng,
@@ -178,7 +178,7 @@ def merged_df_two_days():
         "verbruik": consumption,
         "day_ahead_price": prices,
     })
-    df.set_index("timestamp", drop=False, inplace=True)
+    df = df.set_index("timestamp", drop=False)
     return df
 
 

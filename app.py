@@ -1357,7 +1357,7 @@ def _prepare_simulation_data(meter_df):
     st.write("Data samenvoegen...")
     merged_df = merge_data(meter_df, price_df)
     merged_df['day_ahead_price'] = merged_df['day_ahead_price'] / 1000
-    merged_df.set_index("timestamp", drop=False, inplace=True)
+    merged_df = merged_df.set_index("timestamp", drop=False)
 
     baseline_df = merged_df.copy()
     net = baseline_df['teruglevering'] - baseline_df['verbruik']

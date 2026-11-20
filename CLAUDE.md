@@ -79,7 +79,9 @@ After simulation, `Simulator` adds `adjusted_consumption`, `adjusted_production`
 
 ### Test Baselines
 
-`tests/test_e2e.py`, `tests/test_pv_controller.py`, `tests/test_mpc_e2e.py`, and `tests/test_conservation.py` contain **hardcoded financial expectations** (e.g., `expected_baseline_cost = 430.73`). Any logic change that shifts these values requires explicit justification before updating the constants. The optional `tests/simulation_baseline.csv` (and `tests/mpc_simulation_baseline.csv` for the MPC path) provides a per-timestep regression reference.
+`tests/test_e2e.py`, `tests/test_pv_controller.py`, `tests/test_mpc_e2e.py`, and `tests/test_conservation.py` contain **hardcoded financial expectations** (e.g., `expected_baseline_cost = 430.73`). Any logic change that shifts these values requires explicit justification before updating the constants. The optional `tests/simulation_baseline.csv` (and `tests/mpc_simulation_baseline.csv` for the MPC path) provides a per-timestep regression reference. The MPC baseline is compared **per day** (import, export, wholesale grid cost, end-of-day SoC), not per interval: the MPC problem has equally optimal schedules when quarter-hours share a price, and solver versions pick different ones (see `tests/test_mpc_e2e.py`). Don't regenerate that CSV to make a solver bump pass; a daily-check failure means behaviour really changed.
+
+Dependencies are pinned in `requirements.txt` so CI, local venvs and Streamlit Cloud match. CI runs the suite on Python 3.14 (`test`) and 3.15 (`test-python-3-15`).
 
 ### Controllers Package vs. Top-Level Files
 

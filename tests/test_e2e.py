@@ -26,7 +26,7 @@ def _run_pipeline(meter_df: pd.DataFrame):
     meter dataframe, mirroring test_battwatt_e2e_simulation."""
     price_df = _synthetic_price_df(meter_df["timestamp"])
     merged_df = merge_data(meter_df, price_df, tolerance="15min")
-    merged_df.set_index("timestamp", drop=False, inplace=True)
+    merged_df = merged_df.set_index("timestamp", drop=False)
 
     # Pin efficiency/standby power explicitly so this regression test doesn't
     # drift if the Battery class's defaults change.
@@ -73,7 +73,7 @@ def test_battwatt_e2e_simulation():
     meter_df = load_meter_data_HomeWizzard(PATH_DATA)
     merged_df = merge_data(meter_df, price_df, tolerance="15min")
     merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
-    merged_df.set_index("timestamp", drop=False, inplace=True)
+    merged_df = merged_df.set_index("timestamp", drop=False)
 
     # 2. RUN SIMULATION
     # Pin efficiency/standby power explicitly so this regression test doesn't
