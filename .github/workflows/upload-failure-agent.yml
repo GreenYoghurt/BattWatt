@@ -125,9 +125,15 @@ jobs:
             - Make the smallest general fix, normally in data_loader.py. Existing formats
               must keep loading exactly as before. Do not change the hardcoded financial
               expectations or baseline CSVs in the tests.
-            - Run `python -m pytest -q tests/` until everything passes.
+            - Run the FULL suite, `python -m pytest -q tests/` (not a subset), until
+              everything passes. Your work is discarded unless the full suite passes, and
+              this run must be your last step after your final edit.
+            - If an existing test expects the old behaviour for the very input you now
+              accept (e.g. it uses that value as an example of an unparseable one), update
+              that test to use a value that is genuinely invalid, and explain this in the
+              summary. Never weaken or delete other tests.
             - Write a PR description to `agent_summary.md`: what changed in the source
-              format, the fix, and the tests.
+              format, the fix, the tests, and which parts are inferred from masked data.
             You may only edit data_loader.py, data_checks.py, slimmemeterportal_client.py,
             error_reporting.py, tests/ and docs/. Don't commit or push; that happens later.
 
