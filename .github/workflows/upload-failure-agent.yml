@@ -26,7 +26,11 @@ concurrency:
 
 env:
   DAILY_CAP: "2"
-  ALLOWED_PATHS: '^(data_loader\.py|data_checks\.py|slimmemeterportal_client\.py|error_reporting\.py|tests/.*|docs/.*)$'
+  # Not error_reporting.py or app.py: the agent fixes data handling, never the
+  # pipeline that feeds it or the page itself.
+  ALLOWED_PATHS: '^(data_loader\.py|data_checks\.py|slimmemeterportal_client\.py|tests/.*|docs/.*)$'
+  # Within the allowed paths, files the agent must still never touch.
+  DENIED_PATHS: '^tests/test_error_reporting\.py$'
 
 jobs:
   gate:
@@ -135,7 +139,8 @@ jobs:
             - Write a PR description to `agent_summary.md`: what changed in the source
               format, the fix, the tests, and which parts are inferred from masked data.
             You may only edit data_loader.py, data_checks.py, slimmemeterportal_client.py,
-            error_reporting.py, tests/ and docs/. Don't commit or push; that happens later.
+            tests/ and docs/ (not tests/test_error_reporting.py). Don't commit or push;
+            that happens later.
 
       - id: result
         run: |
@@ -148,7 +153,8 @@ jobs:
           rm -rf agent_verdict.md agent_summary.md .pytest_cache
           git add -A
           git diff --cached --binary > "$out/fix.patch"
-          bad=$(git diff --cached --name-only | grep -Ev "$ALLOWED_PATHS" || true)
+          files=$(git diff --cached --name-only)
+          bad=$( { echo "$files" | grep -Ev "$ALLOWED_PATHS"; echo "$files" | grep -E "$DENIED_PATHS"; } || true)
           if [ "$verdict" != "FIX" ] || [ ! -s "$out/fix.patch" ]; then
             echo "has_patch=false" >> "$GITHUB_OUTPUT"; echo "tests=skipped" >> "$GITHUB_OUTPUT"
           elif [ -n "$bad" ]; then
@@ -218,7 +224,8 @@ jobs:
         if: env.VERDICT == 'FIX' && env.HAS_PATCH == 'true' && env.TESTS == 'passed'
         run: |
           patch="$RUNNER_TEMP/out/fix.patch"
-          bad=$(git apply --numstat "$patch" | cut -f3 | grep -Ev "$ALLOWED_PATHS" || true)
+          files=$(git apply --numstat "$patch" | cut -f3)
+          bad=$( { echo "$files" | grep -Ev "$ALLOWED_PATHS"; echo "$files" | grep -E "$DENIED_PATHS"; } || true)
           if [ -n "$bad" ]; then
             gh issue comment "$ISSUE" -R "$REPO" --body "Agent patch rejected: it touches files outside the allowed paths: $(echo $bad | tr '\n' ' ')"
             exit 1

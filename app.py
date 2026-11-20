@@ -11,7 +11,12 @@ from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine
 from models import SimulationResult
-from error_reporting import AlertLimiter, AlertSettings, report_failure
+# Failure reporting is optional: if the module is broken or a dependency is
+# missing, the app must still work, just without alerts.
+try:
+    import error_reporting
+except Exception:  # noqa: BLE001
+    error_reporting = None
 import base64
 import time
 
@@ -605,38 +610,48 @@ def _secret(name, default=None):
         return default
 
 
-ALERT_SETTINGS = AlertSettings(
-    webhook_url=_secret("ALERT_WEBHOOK_URL"),
-    github_token=_secret("GITHUB_ISSUE_TOKEN"),
-    github_repo=_secret("GITHUB_REPO", "GreenYoghurt/BattWatt"),
-)
-
-
 @st.cache_resource
 def _alert_limiter():
     """One limiter for all sessions, so limits hold across users and reruns."""
-    return AlertLimiter()
+    return error_reporting.AlertLimiter()
 
 
 def _report_failure(error, source, upload=None):
-    """Triage and report a failure; returns True if the maintainer knows about it.
+    """Hand a failure to the background reporter; True if it was queued.
 
-    Remembered per session, so repeated clicks keep showing the notice while
-    the limiter prevents duplicate alerts.
+    Isolated from the app on purpose: everything is wrapped so that a bug in
+    reporting can never break the page, and the actual triage and network
+    calls run on a background worker (error_reporting.submit_report), so a
+    hanging ntfy/GitHub can't block the user. Remembered per session, so
+    repeated clicks keep showing the notice without queueing duplicates.
     """
-    key = (source, type(error).__name__, getattr(upload, "file_id", None))
-    known = st.session_state.setdefault("reported_failures", {})
-    if key not in known:
-        try:
-            ip = st.context.ip_address
-        except Exception:
-            ip = None
-        known[key] = report_failure(error, source=source, settings=ALERT_SETTINGS,
-                                    upload=upload, limiter=_alert_limiter(), ip=ip)
-    return known[key]
+    try:
+        if error_reporting is None:
+            return False
+        key = (source, type(error).__name__, getattr(upload, "file_id", None))
+        known = st.session_state.setdefault("reported_failures", {})
+        if key not in known:
+            try:
+                ip = st.context.ip_address
+            except Exception:
+                ip = None
+            settings = error_reporting.AlertSettings(
+                webhook_url=_secret("ALERT_WEBHOOK_URL"),
+                github_token=_secret("GITHUB_ISSUE_TOKEN"),
+                github_repo=_secret("GITHUB_REPO", "GreenYoghurt/BattWatt"),
+            )
+            known[key] = error_reporting.submit_report(
+                error, source=source, settings=settings, upload=upload,
+                limiter=_alert_limiter(), ip=ip)
+        return known[key]
+    except Exception:  # noqa: BLE001
+        return False
 
 
-_NOTIFIED_MSG = "De beheerder van deze app is automatisch op de hoogte gebracht (zonder je meetgegevens)."
+# Reporting runs in the background, so the page can't know the outcome; it
+# only knows the failure was handed over (triage may still decide to ignore it).
+_NOTIFIED_MSG = ("Als dit een probleem aan onze kant lijkt, wordt de beheerder van deze app "
+                 "automatisch ingelicht (zonder je meetgegevens).")
 
 # ── Page header ───────────────────────────────────────────────────────────────
 

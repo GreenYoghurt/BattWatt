@@ -265,15 +265,30 @@ class AlertLimiter:
         self._files: Dict[str, float] = {}
         self._signatures: Dict[str, float] = {}
         self._ips: Dict[str, List[float]] = {}
-        self._first_seen: Dict[str, float] = {}
+        self._outages: Dict[str, Tuple[float, float]] = {}  # signature -> (first seen, last seen)
         self._escalated: set = set()
 
     def _ip_key(self, ip: str) -> str:
         return hashlib.sha256(self._salt + ip.encode()).hexdigest()
 
+    def _prune(self, now: float) -> None:
+        """Drop expired entries so memory stays bounded however many uploads fail.
+
+        Caller holds the lock.
+        """
+        for d in (self._files, self._signatures):
+            for k in [k for k, t in d.items() if now - t >= self.window]:
+                del d[k]
+        for k in [k for k, ts in self._ips.items() if not ts or now - ts[-1] >= self.window]:
+            del self._ips[k]
+        for k in [k for k, (_, last) in self._outages.items() if now - last >= self.escalate_after]:
+            del self._outages[k]
+            self._escalated.discard(k)
+
     def allow(self, signature: str, file_digest: Optional[str] = None, ip: Optional[str] = None) -> bool:
         now = self.clock()
         with self._lock:
+            self._prune(now)
             if file_digest and now - self._files.get(file_digest, -1e18) < self.window:
                 return False
             if now - self._signatures.get(signature, -1e18) < self.window:
@@ -291,10 +306,16 @@ class AlertLimiter:
             return True
 
     def should_escalate(self, signature: str) -> bool:
-        """True once, when an outage with this signature has lasted escalate_after."""
+        """True once, when an outage with this signature has lasted escalate_after.
+
+        An outage that hasn't been seen for escalate_after is forgotten (see
+        _prune), so a recurrence a few days later starts counting afresh.
+        """
         now = self.clock()
         with self._lock:
-            first = self._first_seen.setdefault(signature, now)
+            self._prune(now)
+            first, _ = self._outages.get(signature, (now, now))
+            self._outages[signature] = (first, now)
             if signature not in self._escalated and now - first >= self.escalate_after:
                 self._escalated.add(signature)
                 return True
@@ -399,7 +420,11 @@ def report_failure(error: BaseException, *, source: str, settings: AlertSettings
     Never raises.
     """
     try:
-        info = describe_upload(upload) if source == "upload" else None
+        if source == "upload":
+            info = describe_upload(upload) if upload is not None else {
+                "extension": "", "size_kb": None, "loader": "unknown", "columns": [], "raw_headers": []}
+        else:
+            info = None
         if source == "upload":
             category, reason = classify_upload_failure(error, info)
         else:
@@ -427,6 +452,87 @@ def report_failure(error: BaseException, *, source: str, settings: AlertSettings
         return notified
     except Exception:
         return False
+
+
+# ── Background submission ─────────────────────────────────────────────────────
+#
+# Reporting must never slow down or break the app: it re-reads the upload and
+# makes up to three network calls (5 s timeout each). So the app only hands a
+# report to one background worker and returns immediately. At most
+# MAX_PENDING reports wait; beyond that new ones are dropped, so a flood of
+# failures (or a hanging ntfy/GitHub) can't pile up threads or memory.
+
+MAX_PENDING = 5
+MAX_SNAPSHOT_BYTES = 25 * 1024 * 1024
+
+_pending = threading.BoundedSemaphore(MAX_PENDING)
+_executor = None
+_executor_lock = threading.Lock()
+
+
+def _get_executor():
+    global _executor
+    with _executor_lock:
+        if _executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="failure-report")
+        return _executor
+
+
+class UploadSnapshot(io.BytesIO):
+    """A private copy of an upload, so the worker never shares the user's file object."""
+
+    def __init__(self, data: bytes, name: str, file_id: Any = None):
+        super().__init__(data)
+        self.name = name
+        self.size = len(data)
+        self.file_id = file_id
+
+
+def snapshot_upload(upload: Any) -> Optional[UploadSnapshot]:
+    """Copy an upload's bytes (cheap: they're already in memory). None if too big or unreadable."""
+    data = _raw_bytes(upload)
+    if data is None or len(data) > MAX_SNAPSHOT_BYTES:
+        return None
+    return UploadSnapshot(data, str(getattr(upload, "name", "upload")), getattr(upload, "file_id", None))
+
+
+def submit_report(error: BaseException, *, source: str, settings: AlertSettings,
+                  upload: Any = None, limiter: Optional[AlertLimiter] = None,
+                  ip: Optional[str] = None) -> bool:
+    """Queue report_failure() on the background worker and return at once.
+
+    Returns True if the report was queued, False if reporting is not
+    configured or the queue is full. Never raises and never blocks.
+    """
+    try:
+        if not (settings.webhook_url or (settings.github_token and settings.github_repo)):
+            return False
+        if not _pending.acquire(blocking=False):
+            return False
+    except Exception:
+        return False
+    try:
+        snapshot = snapshot_upload(upload) if upload is not None else None
+
+        def run():
+            try:
+                report_failure(error, source=source, settings=settings, upload=snapshot,
+                               limiter=limiter, ip=ip)
+            finally:
+                _pending.release()
+
+        _get_executor().submit(run)
+        return True
+    except Exception:
+        _pending.release()
+        return False
+
+
+def wait_for_reports(timeout: float = 30.0) -> None:
+    """Block until queued reports are done. For tests only; the app never waits."""
+    _get_executor().submit(lambda: None).result(timeout=timeout)
 
 
 def report_upload_error(error: BaseException, upload: Any, webhook_url: Optional[str]) -> bool:
