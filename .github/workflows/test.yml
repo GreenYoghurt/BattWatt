@@ -3,6 +3,9 @@ name: Python Tests
 on:
   pull_request:
     branches: [ main, dev ]
+    # ready_for_review: draft PRs opened by the upload failure agent use
+    # GITHUB_TOKEN, which doesn't trigger CI; marking them ready does.
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 jobs:
   test:
@@ -14,7 +17,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.x"
+        python-version: "3.14"
         
     - name: Install dependencies
       run: |

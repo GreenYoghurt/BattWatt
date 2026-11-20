@@ -9,13 +9,19 @@ from energy_providers import Provider
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
-from billing import BillingEngine
+from billing import BillingEngine, compare_providers
 from models import SimulationResult
+# Failure reporting is optional: if the module is broken or a dependency is
+# missing, the app must still work, just without alerts.
+try:
+    import error_reporting
+except Exception:  # noqa: BLE001
+    error_reporting = None
 import base64
 import time
 
 # Page configuration
-st.set_page_config(page_title="BattWatt - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
+st.set_page_config(page_title="Jort's app - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
 
 # Helper to load images for CSS
 def get_base64_of_bin_file(bin_file):
@@ -64,6 +70,57 @@ def get_duration_conv(df):
         duration_hours = 0.25
     return 1.0 / duration_hours
 
+PLOT_CONFIG = {
+    "displaylogo": False,
+    "displayModeBar": True,
+    "toImageButtonOptions": {"format": "png", "scale": 3, "filename": "battwatt_grafiek"},
+}
+
+
+def _style_figure(fig, height=500):
+    """Large, copy-friendly typography and a white background so a screenshot or
+    PNG export stays legible when pasted into a document."""
+    fig.update_layout(
+        height=height,
+        template="plotly_white",
+        font=dict(size=16),
+        title_font=dict(size=18),
+        legend=dict(font=dict(size=15)),
+        margin=dict(l=70, r=70, t=90, b=70),
+    )
+    fig.update_xaxes(tickfont=dict(size=15), title_font=dict(size=16))
+    fig.update_yaxes(tickfont=dict(size=15), title_font=dict(size=16))
+    return fig
+
+
+def _csv_bytes(df, index=False):
+    """Semicolon-separated with decimal comma and BOM: opens directly in Dutch Excel."""
+    return df.to_csv(index=index, sep=";", decimal=",").encode("utf-8-sig")
+
+
+def _download_csv(df, label, filename, key, index=False):
+    st.download_button(label, _csv_bytes(df, index=index), file_name=filename,
+                       mime="text/csv", key=key)
+
+
+def _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed):
+    """Plain-table version of the unified Kostenopbouw, for copy/export."""
+    rows = [r for r in _breakdown_row_defs(breakdown_baseline) if include_fixed or not r[4]]
+    out = []
+    for label, key, is_credit, _vol, _fixed, tarief in rows:
+        sign = -1 if is_credit else 1
+        row = {"Post": label, "Tarief": tarief,
+               "Zonder batterij (€)": round(sign * breakdown_baseline[key], 2)}
+        for res in all_results:
+            row[f"{res['label']} (€)"] = round(sign * res['breakdown_simulated'][key], 2)
+        out.append(row)
+    total = {"Post": "Totaal", "Tarief": "", "Zonder batterij (€)": round(display_baseline, 2)}
+    for res, dc in zip(all_results, display_costs):
+        total[f"{res['label']} (€)"] = round(dc, 2)
+    out.append(total)
+    return pd.DataFrame(out)
+
+
 def create_usage_chart(df, title="Verbruik vs Batterij Status"):
     conv = get_duration_conv(df)
     fig = go.Figure()
@@ -83,10 +140,9 @@ def create_usage_chart(df, title="Verbruik vs Batterij Status"):
         yaxis=dict(title="Vermogen (kW)", side="left"),
         yaxis2=dict(title="Batterij SoC (%)", side="right", overlaying="y", showgrid=False, range=[0, 105]),
         legend=dict(x=0, y=1.1, orientation="h"),
-        height=400,
         hovermode="x unified"
     )
-    return fig
+    return _style_figure(fig, height=500)
 
 def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
     fig = go.Figure()
@@ -103,10 +159,9 @@ def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
         yaxis=dict(title="SoC (kWh)", side="left"),
         yaxis2=dict(title="Prijs (€/kWh)", side="right", overlaying="y", showgrid=False),
         legend=dict(x=0, y=1.1, orientation="h"),
-        height=400,
         hovermode="x unified"
     )
-    return fig
+    return _style_figure(fig, height=500)
 
 # ── Battery configuration helpers ────────────────────────────────────────────
 
@@ -235,6 +290,12 @@ def _render_unified_breakdown(all_results, display_baseline, display_costs, brea
             diff_html = f"<span style='color:red'>▲ € {abs(diff):,.2f}</span>"
         total_cols[i + 2].markdown(f"**€ {dc:,.2f}** {diff_html}", unsafe_allow_html=True)
 
+    table_df = _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed)
+    with st.expander("📋 Kostenopbouw als tabel (kopiëren / exporteren)"):
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        _download_csv(table_df, "⬇️ Download kostenopbouw (CSV)", "battwatt_kostenopbouw.csv",
+                      key="breakdown_csv")
+
 
 # ── Per-battery results renderer ──────────────────────────────────────────────
 
@@ -361,14 +422,16 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
                                    if available_seasons
                                    else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
                         slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_price_{i}")
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
         else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, key=f"{key_prefix}_price")
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
 
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
+        _download_csv(result.df, "⬇️ Download volledige simulatiedata (CSV)",
+                      "battwatt_simulatiedata.csv", key=f"{key_prefix}_raw_csv")
 
 
 # ── Battery-size sweep renderer ────────────────────────────────────────────────
@@ -410,13 +473,12 @@ def _build_single_metric_chart(rows, metric_key, title, color, fill_rgba):
         ),
     ))
     fig.update_layout(
-        title=f"{title} (band = 80-95% rendement, lijn = 90%)",
+        title=title,
         xaxis=dict(title="Batterijgrootte (kWh)", tickvals=SWEEP_SIZES_KWH),
         yaxis=dict(title="€ per jaar"),
-        height=350,
         hovermode="x unified",
     )
-    return fig
+    return _style_figure(fig, height=550)
 
 
 def _build_sweep_charts(rows, include_fixed):
@@ -484,7 +546,11 @@ def _render_sweep_results(sweep_data):
 
     st.header("Resultaten Overzicht: Batterijgrootte vergelijking")
     if sweep_data.get('provider_name'):
-        st.caption(f"📄 Energieleverancier: **{sweep_data['provider_name']}**")
+        if sweep_data.get('provider_comparison'):
+            st.caption(f"📄 Grafieken en details hieronder: **{sweep_data['provider_name']}** (Leverancier 1). "
+                       "Zie 'Vergelijking energieleveranciers' voor de andere contracten.")
+        else:
+            st.caption(f"📄 Energieleverancier: **{sweep_data['provider_name']}**")
 
     include_fixed_sweep = st.checkbox(
         "Vaste kosten meenemen", value=True, key="sweep_include_fixed",
@@ -497,10 +563,19 @@ def _render_sweep_results(sweep_data):
     )
 
     cost_fig, savings_fig = _build_sweep_charts(rows, include_fixed_sweep)
-    st.plotly_chart(cost_fig, use_container_width=True)
-    st.plotly_chart(savings_fig, use_container_width=True)
+    st.caption("Band = 80–95% rendement, lijn = 90%. Gebruik het camera-icoon rechtsboven in een grafiek om hem als PNG op te slaan.")
+    col_cost, col_savings = st.columns(2)
+    with col_cost:
+        st.plotly_chart(cost_fig, use_container_width=True, config=PLOT_CONFIG)
+    with col_savings:
+        st.plotly_chart(savings_fig, use_container_width=True, config=PLOT_CONFIG)
 
     st.caption("⚠️ **Let op:** Deze waarden zijn schattingen gebaseerd op historische data en simulatiemodellen. De werkelijke resultaten kunnen afwijken door o.a. weersomstandigheden, batterij-degradatie en wijzigingen in markttarieven. Gebruik deze resultaten enkel ter oriëntatie.")
+
+    if sweep_data.get('provider_comparison'):
+        st.divider()
+        _render_sweep_provider_comparison(sweep_data['provider_comparison'], rows, include_fixed_sweep)
+        st.divider()
 
     with st.expander("Details per configuratie", expanded=False):
         cost_key = 'cost_total' if include_fixed_sweep else 'cost_variable'
@@ -513,6 +588,8 @@ def _render_sweep_results(sweep_data):
             "Batterij cycli": round(getattr(r['result'], 'total_cycles', 0.0), 1),
         } for r in rows])
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        _download_csv(summary_df, "⬇️ Download tabel (CSV)", "battwatt_batterijgrootte_vergelijking.csv",
+                      key="sweep_summary_csv")
 
         for r in rows:
             with st.expander(f"{r['size_kwh']} kWh @ {r['efficiency']:.0%} rendement", expanded=False):
@@ -520,6 +597,205 @@ def _render_sweep_results(sweep_data):
                     r['breakdown_simulated'], include_fixed=include_fixed_sweep,
                     cost_display=r[cost_key]
                 )
+
+
+# ── Provider comparison renderer ──────────────────────────────────────────────
+
+_BASELINE_COLOR = "#9aa0a6"
+_SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#8e5bd6", "#d6a12a", "#d63a6e", "#3ab8c9", "#6b7a8f"]
+
+
+def _series_color(i):
+    return _SERIES_COLORS[i % len(_SERIES_COLORS)]
+
+
+def _unique_labels(labels):
+    """Appends ' (2)', ' (3)', ... to repeated labels so they can serve as keys."""
+    seen, out = {}, []
+    for lbl in labels:
+        seen[lbl] = seen.get(lbl, 0) + 1
+        out.append(f"{lbl} ({seen[lbl]})" if seen[lbl] > 1 else lbl)
+    return out
+
+
+def _contract_label(contract_type):
+    return "Vast" if contract_type == "fixed" else "Dynamisch"
+
+
+def _provider_cost(entry, include_fixed, baseline=False):
+    """Cost of a compare_providers() entry (baseline=True) or result row."""
+    if baseline:
+        return entry['cost_baseline'] if include_fixed else entry['cost_baseline_variable']
+    return entry['cost_total'] if include_fixed else entry['cost_variable']
+
+
+def _provider_comparison_dataframe(comparison, battery_labels, include_fixed):
+    """One row per provider: yearly cost without and with each battery, then the
+    savings per battery (savings don't depend on include_fixed)."""
+    names = _unique_labels([c['name'] for c in comparison])
+    out = []
+    for name, c in zip(names, comparison):
+        row = {"Leverancier": name, "Contract": _contract_label(c['contract_type']),
+               "Zonder batterij (€)": round(_provider_cost(c, include_fixed, baseline=True), 2)}
+        for lbl, r in zip(battery_labels, c['results']):
+            row[f"{lbl} (€)"] = round(_provider_cost(r, include_fixed), 2)
+        for lbl, r in zip(battery_labels, c['results']):
+            row[f"Besparing {lbl} (€)"] = round(r['savings'], 2)
+        out.append(row)
+    return pd.DataFrame(out)
+
+
+def _build_provider_comparison_charts(comparison, battery_labels, include_fixed):
+    """Grouped bars per provider: yearly cost (baseline + each battery) and savings."""
+    names = _unique_labels([c['name'] for c in comparison])
+    cost_suffix = "incl. vaste kosten" if include_fixed else "excl. vaste kosten"
+
+    cost_fig = go.Figure()
+    cost_fig.add_trace(go.Bar(
+        x=names, y=[_provider_cost(c, include_fixed, baseline=True) for c in comparison],
+        name="Zonder batterij", marker_color=_BASELINE_COLOR,
+        hovertemplate="%{x}<br>Zonder batterij: €%{y:,.2f}<extra></extra>",
+    ))
+    savings_fig = go.Figure()
+    for i, lbl in enumerate(battery_labels):
+        cost_fig.add_trace(go.Bar(
+            x=names, y=[_provider_cost(c['results'][i], include_fixed) for c in comparison],
+            name=lbl, marker_color=_series_color(i),
+            hovertemplate="%{x}<br>" + lbl + ": €%{y:,.2f}<extra></extra>",
+        ))
+        savings_fig.add_trace(go.Bar(
+            x=names, y=[c['results'][i]['savings'] for c in comparison],
+            name=lbl, marker_color=_series_color(i),
+            hovertemplate="%{x}<br>" + lbl + ": €%{y:,.2f}<extra></extra>",
+        ))
+    for fig, title in ((cost_fig, f"Jaarkosten per leverancier ({cost_suffix})"),
+                       (savings_fig, "Besparing per leverancier")):
+        fig.update_layout(title=title, barmode="group", yaxis=dict(title="€ per jaar"))
+    _style_figure(cost_fig, height=550)
+    _style_figure(savings_fig, height=550)
+    for fig in (cost_fig, savings_fig):
+        fig.update_layout(legend=dict(orientation="h", x=0, y=-0.15))
+    savings_fig.update_layout(showlegend=len(battery_labels) > 1)
+    return cost_fig, savings_fig
+
+
+def _cheapest_caption(comparison, option_labels, option_costs):
+    """'Laagste jaarkosten: X — Y (€..)' over every provider × option combination.
+    option_costs(entry) returns one cost per label in option_labels."""
+    names = _unique_labels([c['name'] for c in comparison])
+    best = min(((cost, name, lbl)
+                for name, c in zip(names, comparison)
+                for lbl, cost in zip(option_labels, option_costs(c))),
+               key=lambda t: t[0])
+    return f"💡 Laagste jaarkosten: **{best[1]}** {best[2]}: **€{best[0]:,.2f}**"
+
+
+def _all_option_costs(include_fixed):
+    return lambda c: ([_provider_cost(c, include_fixed, baseline=True)]
+                      + [_provider_cost(r, include_fixed) for r in c['results']])
+
+
+def _render_provider_comparison(comparison, battery_labels, include_fixed):
+    st.subheader("Vergelijking energieleveranciers")
+    st.caption(
+        "Dezelfde batterijsimulatie, doorgerekend met elk contract. De besparing geldt per leverancier: "
+        "kosten zonder batterij minus kosten met batterij bij diezelfde leverancier. "
+        "De aansturing van de batterij is bepaald door Leverancier 1."
+    )
+    st.markdown(_cheapest_caption(
+        comparison, ["zonder batterij"] + [f"met {lbl}" for lbl in battery_labels],
+        _all_option_costs(include_fixed),
+    ))
+
+    cost_fig, savings_fig = _build_provider_comparison_charts(comparison, battery_labels, include_fixed)
+    col_cost, col_savings = st.columns(2)
+    with col_cost:
+        st.plotly_chart(cost_fig, use_container_width=True, config=PLOT_CONFIG, key="provider_cost_chart")
+    with col_savings:
+        st.plotly_chart(savings_fig, use_container_width=True, config=PLOT_CONFIG, key="provider_savings_chart")
+
+    table_df = _provider_comparison_dataframe(comparison, battery_labels, include_fixed)
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
+    _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
+                  "battwatt_leveranciersvergelijking.csv", key="provider_comparison_csv")
+
+
+def _sweep_provider_dataframe(comparison, rows, include_fixed):
+    """Long-format table: one line per provider × battery configuration, with a
+    'geen batterij' line (0 kWh) per provider first."""
+    names = _unique_labels([c['name'] for c in comparison])
+    cost_col = f"Totale kosten {'incl.' if include_fixed else 'excl.'} vaste kosten (€)"
+    out = []
+    for name, c in zip(names, comparison):
+        contract = _contract_label(c['contract_type'])
+        out.append({"Leverancier": name, "Contract": contract,
+                    "Batterijgrootte (kWh)": 0, "Rendement": "—",
+                    cost_col: round(_provider_cost(c, include_fixed, baseline=True), 2),
+                    "Besparing (€)": 0.0})
+        for sweep_row, r in zip(rows, c['results']):
+            out.append({"Leverancier": name, "Contract": contract,
+                        "Batterijgrootte (kWh)": sweep_row['size_kwh'],
+                        "Rendement": f"{sweep_row['efficiency']:.0%}",
+                        cost_col: round(_provider_cost(r, include_fixed), 2),
+                        "Besparing (€)": round(r['savings'], 2)})
+    return pd.DataFrame(out)
+
+
+def _build_sweep_provider_charts(comparison, rows, include_fixed, efficiency=0.90):
+    """One line per provider at the given efficiency: yearly cost (0 kWh = no
+    battery) and savings per battery size."""
+    names = _unique_labels([c['name'] for c in comparison])
+    idx_by_size = {r['size_kwh']: i for i, r in enumerate(rows) if r['efficiency'] == efficiency}
+    sizes = [s for s in SWEEP_SIZES_KWH if s in idx_by_size]
+    cost_suffix = "incl. vaste kosten" if include_fixed else "excl. vaste kosten"
+
+    cost_fig, savings_fig = go.Figure(), go.Figure()
+    for i, (name, c) in enumerate(zip(names, comparison)):
+        style = dict(mode="lines+markers", name=name,
+                     line=dict(color=_series_color(i), width=2), marker=dict(size=8),
+                     hovertemplate=name + ": €%{y:,.2f}<extra></extra>")
+        cost_fig.add_trace(go.Scatter(
+            x=[0] + sizes,
+            y=[_provider_cost(c, include_fixed, baseline=True)]
+              + [_provider_cost(c['results'][idx_by_size[s]], include_fixed) for s in sizes],
+            **style))
+        savings_fig.add_trace(go.Scatter(
+            x=sizes, y=[c['results'][idx_by_size[s]]['savings'] for s in sizes], **style))
+    cost_fig.update_layout(
+        title=f"Jaarkosten per leverancier ({cost_suffix})",
+        xaxis=dict(title="Batterijgrootte (kWh, 0 = geen batterij)", tickvals=[0] + sizes),
+    )
+    savings_fig.update_layout(
+        title="Besparing per leverancier",
+        xaxis=dict(title="Batterijgrootte (kWh)", tickvals=sizes),
+    )
+    for fig in (cost_fig, savings_fig):
+        fig.update_layout(yaxis=dict(title="€ per jaar"), hovermode="x unified")
+        _style_figure(fig, height=550)
+        fig.update_layout(legend=dict(orientation="h", x=0, y=-0.2))
+    return cost_fig, savings_fig
+
+
+def _render_sweep_provider_comparison(comparison, rows, include_fixed):
+    st.subheader("Vergelijking energieleveranciers")
+    st.caption(
+        "Dezelfde batterijsimulaties, doorgerekend met elk contract. De grafieken tonen 90% rendement; "
+        "de tabel bevat alle combinaties. De aansturing van de batterij is bepaald door Leverancier 1."
+    )
+    option_labels = ["zonder batterij"] + [f"met {r['size_kwh']} kWh @ {r['efficiency']:.0%}" for r in rows]
+    st.markdown(_cheapest_caption(comparison, option_labels, _all_option_costs(include_fixed)))
+    cost_fig, savings_fig = _build_sweep_provider_charts(comparison, rows, include_fixed)
+    col_cost, col_savings = st.columns(2)
+    with col_cost:
+        st.plotly_chart(cost_fig, use_container_width=True, config=PLOT_CONFIG, key="sweep_provider_cost_chart")
+    with col_savings:
+        st.plotly_chart(savings_fig, use_container_width=True, config=PLOT_CONFIG, key="sweep_provider_savings_chart")
+    with st.expander("Leveranciersvergelijking als tabel", expanded=False):
+        table_df = _sweep_provider_dataframe(comparison, rows, include_fixed)
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
+                      "battwatt_leveranciersvergelijking_batterijgrootte.csv",
+                      key="sweep_provider_comparison_csv")
 
 
 # ── Secrets / API Key ─────────────────────────────────────────────────────────
@@ -534,9 +810,60 @@ try:
 except Exception:
     SMP_API_KEY_DEFAULT = None
 
+# Optional: privacy-safe failure alerts and agent issues (see error_reporting.py)
+def _secret(name, default=None):
+    try:
+        return st.secrets[name]
+    except Exception:
+        return default
+
+
+@st.cache_resource
+def _alert_limiter():
+    """One limiter for all sessions, so limits hold across users and reruns."""
+    return error_reporting.AlertLimiter()
+
+
+def _report_failure(error, source, upload=None):
+    """Hand a failure to the background reporter; True if it was queued.
+
+    Isolated from the app on purpose: everything is wrapped so that a bug in
+    reporting can never break the page, and the actual triage and network
+    calls run on a background worker (error_reporting.submit_report), so a
+    hanging ntfy/GitHub can't block the user. Remembered per session, so
+    repeated clicks keep showing the notice without queueing duplicates.
+    """
+    try:
+        if error_reporting is None:
+            return False
+        key = (source, type(error).__name__, getattr(upload, "file_id", None))
+        known = st.session_state.setdefault("reported_failures", {})
+        if key not in known:
+            try:
+                ip = st.context.ip_address
+            except Exception:
+                ip = None
+            settings = error_reporting.AlertSettings(
+                webhook_url=_secret("ALERT_WEBHOOK_URL"),
+                github_token=_secret("GITHUB_ISSUE_TOKEN"),
+                github_repo=_secret("GITHUB_REPO", "GreenYoghurt/BattWatt"),
+            )
+            known[key] = error_reporting.submit_report(
+                error, source=source, settings=settings, upload=upload,
+                limiter=_alert_limiter(), ip=ip)
+        return known[key]
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# Reporting runs in the background, so the page can't know the outcome; it
+# only knows the failure was handed over (triage may still decide to ignore it).
+_NOTIFIED_MSG = ("Als dit een probleem aan onze kant lijkt, wordt de beheerder van deze app "
+                 "automatisch ingelicht (zonder je meetgegevens).")
+
 # ── Page header ───────────────────────────────────────────────────────────────
 
-st.title("🔋 BattWatt: Thuisbatterij Evaluator")
+st.title("🔋 Jort's app: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je **kwartiergegevens** (P1-meterdata per 15 minuten) om te beginnen.
@@ -578,7 +905,12 @@ st.markdown(
         <details>
             <summary><span class="bw-icon">?</span></summary>
             <div class="bw-tooltip">
-                Alle uploads en berekeningen blijven binnen uw sessie. Deze app wordt gehost op
+                Alle uploads en berekeningen blijven binnen uw sessie. Als het inlezen van een
+                bestand mislukt, ontvangt de beheerder een foutmelding met alleen de structuur
+                van het bestand (kolomnamen en gemaskeerde waardepatronen, zoals <code>'-99</code>) —
+                nooit uw meetwaarden, tijdstippen of bestandsnaam. Om misbruik te beperken wordt
+                een onherleidbare hash van uw IP-adres tijdelijk in het geheugen bijgehouden; die
+                wordt nergens opgeslagen of verstuurd. Deze app wordt gehost op
                 Streamlit Community Cloud — zie het
                 <a href="https://streamlit.io/privacy-policy" target="_blank" rel="noopener">Streamlit privacybeleid</a>
                 voor meer informatie.
@@ -678,9 +1010,13 @@ else:  # SlimmeMeterPortal API
         try:
             client = SlimmeMeterPortalClient(api_key=smp_api_key)
             st.session_state["smp_connections"] = client.get_connections()
-        except SlimmeMeterPortalError as e:
+        except Exception as e:
+            # Exception, not just SlimmeMeterPortalError: network failures
+            # (requests.ConnectionError/Timeout) used to crash with a traceback.
             st.session_state.pop("smp_connections", None)
             st.sidebar.error(f"Fout bij ophalen aansluitingen: {e}")
+            if _report_failure(e, "slimmemeterportal"):
+                st.sidebar.caption(_NOTIFIED_MSG)
 
     connections = st.session_state.get("smp_connections")
     if connections:
@@ -712,10 +1048,12 @@ else:  # SlimmeMeterPortal API
                     usages = flatten_usage_range(day_responses)
                     st.session_state["smp_meter_df"] = SlimmeMeterPortalAPILoader().load_usages(usages)
                     st.session_state["smp_missing_dates"] = find_missing_dates(dates, day_responses)
-                except (SlimmeMeterPortalError, ValueError) as e:
+                except Exception as e:
                     st.session_state.pop("smp_meter_df", None)
                     st.session_state.pop("smp_missing_dates", None)
                     st.sidebar.error(f"Fout bij ophalen data: {e}")
+                    if _report_failure(e, "slimmemeterportal"):
+                        st.sidebar.caption(_NOTIFIED_MSG)
                 finally:
                     progress_bar.empty()
 
@@ -804,66 +1142,119 @@ else:
 
 st.sidebar.divider()
 
-# 3. Provider
+# 3. Provider(s)
 st.sidebar.subheader("💶 Energieleverancier")
-with st.sidebar.expander("Provider Details", expanded=True):
-    contract_type_choice = st.radio(
-        "Type contract", ["Dynamisch contract", "Vast contract"], horizontal=True,
-        help="**Dynamisch contract:** je betaalt per kwartier de actuele day-ahead marktprijs.\n\n**Vast contract:** je betaalt een vast normaal- en daltarief, en ontvangt een vaste terugleververgoeding."
-    )
-    custom_name = st.text_input(
-        "Naam energieleverancier (voor eigen documentatie)", value="Mijn Leverancier"
-    )
-    custom_sub = st.number_input(
-        "Vaste leveringskosten (€/jaar)", value=75.0, step=1.0,
-        help="Jaarlijks vast bedrag dat je leverancier rekent bovenop de variabele energiekosten."
-    )
 
-    if contract_type_choice == "Vast contract":
-        custom_normaal = st.number_input(
-            "Normaaltarief (€/kWh incl. BTW)", value=0.28, step=0.01, format="%.4f",
-            help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 07:00 en 23:00."
-        )
-        custom_dal = st.number_input(
-            "Daltarief (€/kWh incl. BTW)", value=0.26, step=0.01, format="%.4f",
-            help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend."
-        )
-        custom_terug = st.number_input(
-            "Terugleververgoeding (€/kWh incl. BTW)", value=0.09, step=0.01, format="%.4f",
-            help="Vaste vergoeding per kWh die je teruglevert aan het net (geen saldering)."
-        )
-    else:
-        custom_buy = st.number_input(
-            "Leveranciersopslag inkoop (€/kWh incl. BTW)", value=0.02, format="%.4f",
-            help="Opslag die je leverancier rekent per kWh die je van het net afneemt, bovenop de marktprijs en energiebelasting."
-        )
-        custom_sell = st.number_input(
-            "Leveranciersopslag teruglevering (€/kWh incl. BTW)", value=0.02, format="%.4f",
-            help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
-        )
+_PROVIDER_DEFAULTS = {
+    "prov_type": "Dynamisch contract",
+    "prov_sub": 75.0,
+    "prov_normaal": 0.28,
+    "prov_dal": 0.26,
+    "prov_terug": 0.09,
+    "prov_buy": 0.02,
+    "prov_sell": 0.02,
+}
 
-if contract_type_choice == "Vast contract":
-    provider = Provider(
-        name=custom_name,
-        subscription_cost=custom_sub,
-        buying_fee=0.0,
-        selling_fee=0.0,
-        net_metering=False,
-        selling_fee_net_metering=False,
-        contract_type="fixed",
-        normaal_tarief=custom_normaal,
-        dal_tarief=custom_dal,
-        terugleververgoeding=custom_terug,
-    )
-else:
-    provider = Provider(
-        name=custom_name,
-        subscription_cost=custom_sub,
-        buying_fee=custom_buy,
-        selling_fee=custom_sell,
-        net_metering=False,
-        selling_fee_net_metering=True,
+
+def _init_provider_state(pid, name):
+    """Seed defaults for a provider's widgets. Widgets that were hidden (e.g. the
+    fixed-contract fields of a dynamic provider) lose their state in Streamlit, so
+    this also restores defaults when they come back."""
+    st.session_state.setdefault(f"prov_name_{pid}", name)
+    for field, default in _PROVIDER_DEFAULTS.items():
+        st.session_state.setdefault(f"{field}_{pid}", default)
+
+
+def _provider_from_id(pid):
+    """Builds a Provider from the sidebar widgets of provider `pid`."""
+    get = lambda field: st.session_state.get(f"{field}_{pid}", _PROVIDER_DEFAULTS.get(field))
+    name = st.session_state.get(f"prov_name_{pid}") or "Leverancier"
+    if get("prov_type") == "Vast contract":
+        return Provider(
+            name=name, subscription_cost=get("prov_sub"),
+            buying_fee=0.0, selling_fee=0.0,
+            net_metering=False, selling_fee_net_metering=False,
+            contract_type="fixed",
+            normaal_tarief=get("prov_normaal"), dal_tarief=get("prov_dal"),
+            terugleververgoeding=get("prov_terug"),
+        )
+    return Provider(
+        name=name, subscription_cost=get("prov_sub"),
+        buying_fee=get("prov_buy"), selling_fee=get("prov_sell"),
+        net_metering=False, selling_fee_net_metering=True,
         contract_type="dynamic",
+    )
+
+
+if "provider_ids" not in st.session_state:
+    st.session_state.provider_ids = [0]
+    st.session_state.provider_counter = 1
+
+for pid in list(st.session_state.provider_ids):
+    _init_provider_state(pid, "Mijn Leverancier" if pid == 0 else f"Leverancier {pid + 1}")
+    idx_in_list = st.session_state.provider_ids.index(pid) + 1
+    with st.sidebar.expander(f"Leverancier {idx_in_list}: {st.session_state[f'prov_name_{pid}']}",
+                             expanded=(idx_in_list == 1)):
+        col_l, col_d = st.columns([5, 1])
+        with col_l:
+            st.text_input("Naam energieleverancier (voor eigen documentatie)", key=f"prov_name_{pid}")
+        with col_d:
+            st.write("")
+            if len(st.session_state.provider_ids) > 1:
+                if st.button("🗑", key=f"del_prov_{pid}"):
+                    st.session_state.provider_ids.remove(pid)
+                    st.rerun()
+
+        st.radio(
+            "Type contract", ["Dynamisch contract", "Vast contract"], horizontal=True,
+            key=f"prov_type_{pid}",
+            help="**Dynamisch contract:** je betaalt per kwartier de actuele day-ahead marktprijs.\n\n**Vast contract:** je betaalt een vast normaal- en daltarief, en ontvangt een vaste terugleververgoeding."
+        )
+        st.number_input(
+            "Vaste leveringskosten (€/jaar)", step=1.0, key=f"prov_sub_{pid}",
+            help="Jaarlijks vast bedrag dat je leverancier rekent bovenop de variabele energiekosten."
+        )
+
+        if st.session_state[f"prov_type_{pid}"] == "Vast contract":
+            st.number_input(
+                "Normaaltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_normaal_{pid}",
+                help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 07:00 en 23:00."
+            )
+            st.number_input(
+                "Daltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_dal_{pid}",
+                help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend."
+            )
+            st.number_input(
+                "Terugleververgoeding (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_terug_{pid}",
+                help="Vaste vergoeding per kWh die je teruglevert aan het net (geen saldering)."
+            )
+        else:
+            st.number_input(
+                "Leveranciersopslag inkoop (€/kWh incl. BTW)", format="%.4f", key=f"prov_buy_{pid}",
+                help="Opslag die je leverancier rekent per kWh die je van het net afneemt, bovenop de marktprijs en energiebelasting."
+            )
+            st.number_input(
+                "Leveranciersopslag teruglevering (€/kWh incl. BTW)", format="%.4f", key=f"prov_sell_{pid}",
+                help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
+            )
+
+if st.sidebar.button("➕ Leverancier toevoegen", use_container_width=True,
+                     help="Voeg een extra energiecontract toe om te vergelijken. De batterijsimulatie wordt één keer gedraaid; elke leverancier rekent daarna met dezelfde energiestromen."):
+    new_id = st.session_state.provider_counter
+    st.session_state.provider_counter += 1
+    st.session_state.provider_ids.append(new_id)
+    _init_provider_state(new_id, f"Leverancier {len(st.session_state.provider_ids)}")
+    st.rerun()
+
+providers = [_provider_from_id(pid) for pid in st.session_state.provider_ids]
+# The first provider is the primary one: it drives the strategy choice and the
+# MPC dispatch, and it is the one shown in the detailed Kostenopbouw.
+provider = providers[0]
+contract_type_choice = "Vast contract" if provider.contract_type == "fixed" else "Dynamisch contract"
+if len(providers) > 1:
+    st.sidebar.caption(
+        f"De resultaten tonen een vergelijking van {len(providers)} leveranciers. "
+        f"**Leverancier 1** bepaalt de aansturing van de batterij en de gedetailleerde kostenopbouw."
     )
 
 st.sidebar.divider()
@@ -881,6 +1272,10 @@ else:
         "Kosten Optimaal (MPC)": "MPC"
     }
     strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
+if len(providers) > 1:
+    strategy_help += (f"\n\nBij meerdere leveranciers bepaalt **Leverancier 1 ({provider.name})** de aansturing: "
+                      "de batterij wordt één keer gesimuleerd en elke leverancier rekent met dezelfde energiestromen. "
+                      "Kosten Optimaal (MPC) optimaliseert dus op de opslagen van Leverancier 1.")
 selected_strategy = st.sidebar.selectbox(
     "Selecteer Strategie", list(strategy_map.keys()),
     help=strategy_help
@@ -950,6 +1345,8 @@ def _prepare_simulation_data(meter_df):
         st.stop()
     except Exception as e:
         st.error(f"Fout bij ophalen prijzen: {e}")
+        if _report_failure(e, "entsoe"):
+            st.caption(_NOTIFIED_MSG)
         st.stop()
 
     st.write("Data samenvoegen...")
@@ -975,13 +1372,13 @@ def _prepare_simulation_data(meter_df):
     cost_baseline = billing.calculate_bill(baseline_result)
     breakdown_baseline = billing.calculate_bill_breakdown(baseline_result)
 
-    return merged_df, billing, cost_baseline, breakdown_baseline
+    return merged_df, baseline_result, billing, cost_baseline, breakdown_baseline
 
 
 def _run_simulation(meter_df):
     """Fetch prices, run baseline + all battery configs sequentially, store results."""
     with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
-        merged_df, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
+        merged_df, baseline_result, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
 
         # Sequential simulation per battery
         battery_ids = list(st.session_state.battery_ids)
@@ -1022,6 +1419,12 @@ def _run_simulation(meter_df):
                 'breakdown_simulated': breakdown_simulated,
             })
 
+        provider_comparison = None
+        if len(providers) > 1:
+            st.write(f"Kosten berekenen voor {len(providers)} leveranciers...")
+            provider_comparison = compare_providers(
+                providers, baseline_result, [r['result'] for r in all_results])
+
         status.update(label="Simulatie Voltooid!", state="complete", expanded=False)
         st.session_state['simulation_result'] = {
             'cost_baseline': cost_baseline,
@@ -1029,6 +1432,7 @@ def _run_simulation(meter_df):
             'all_results': all_results,
             'strategy': strategy_map[selected_strategy],
             'provider_name': provider.name,
+            'provider_comparison': provider_comparison,
         }
         st.session_state.pop('sweep_result', None)
 
@@ -1037,7 +1441,7 @@ def _run_sweep_simulation(meter_df):
     """Fetch prices, then run the automatic battery size x efficiency grid
     (SWEEP_SIZES_KWH x SWEEP_EFFICIENCIES) and store the results."""
     with st.status("Data verwerken en sweep-simulatie uitvoeren...", expanded=True) as status:
-        merged_df, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
+        merged_df, baseline_result, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
 
         combos = [(size, eff) for size in SWEEP_SIZES_KWH for eff in SWEEP_EFFICIENCIES]
         rows = []
@@ -1089,6 +1493,12 @@ def _run_sweep_simulation(meter_df):
         for r in rows:
             r['savings_variable'] = cost_baseline_variable - r['cost_variable']
 
+        provider_comparison = None
+        if len(providers) > 1:
+            st.write(f"Kosten berekenen voor {len(providers)} leveranciers...")
+            provider_comparison = compare_providers(
+                providers, baseline_result, [r['result'] for r in rows])
+
         status.update(label="Sweep Voltooid!", state="complete", expanded=False)
         st.session_state['sweep_result'] = {
             'cost_baseline': cost_baseline,
@@ -1097,6 +1507,7 @@ def _run_sweep_simulation(meter_df):
             'rows': rows,
             'strategy': strategy_map[selected_strategy],
             'provider_name': provider.name,
+            'provider_comparison': provider_comparison,
         }
         st.session_state.pop('simulation_result', None)
 
@@ -1116,7 +1527,13 @@ if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="pri
         else:
             meter_df, data_checks = st.session_state["smp_meter_df"], []
     except Exception as e:
+        # Only report auto-detected uploads: a failing custom mapping is a
+        # user configuration issue, not a format change.
+        notified = (meter_source == "Bestand upload" and not custom_mapping
+                    and _report_failure(e, "upload", uploaded_meter))
         st.error(f"Fout bij inlezen meterdata: {e}")
+        if notified:
+            st.caption(_NOTIFIED_MSG)
         st.stop()
 
     failed_checks = [c for c in data_checks if not c.passed]
@@ -1174,8 +1591,13 @@ elif 'simulation_result' in st.session_state:
     strategy = res_data['strategy']
 
     st.header("Resultaten Overzicht")
+    provider_comparison = res_data.get('provider_comparison')
     if res_data.get('provider_name'):
-        st.caption(f"📄 Energieleverancier: **{res_data['provider_name']}**")
+        if provider_comparison:
+            st.caption(f"📄 Overzicht en kostenopbouw hieronder: **{res_data['provider_name']}** (Leverancier 1). "
+                       "Zie 'Vergelijking energieleveranciers' voor de andere contracten.")
+        else:
+            st.caption(f"📄 Energieleverancier: **{res_data['provider_name']}**")
     include_fixed = st.checkbox(
         "Vaste kosten meenemen", value=True,
         help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken."
@@ -1227,6 +1649,11 @@ elif 'simulation_result' in st.session_state:
     if breakdown_baseline and all(r['breakdown_simulated'] for r in all_results):
         with st.expander("Kostenopbouw Vergelijking", expanded=True):
             _render_unified_breakdown(all_results, display_baseline, display_costs, breakdown_baseline, include_fixed)
+
+    if provider_comparison:
+        st.divider()
+        _render_provider_comparison(
+            provider_comparison, _unique_labels([r['label'] for r in all_results]), include_fixed)
 
     st.divider()
 
@@ -1305,11 +1732,11 @@ elif 'simulation_result' in st.session_state:
                                    if available_seasons
                                    else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
                         slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, key=f"{key_prefix}_price_{i}")
+                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
         else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, key=f"{key_prefix}_price")
+            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
 
         if pos < len(selected_indices) - 1:
             st.divider()
@@ -1321,8 +1748,12 @@ elif 'simulation_result' in st.session_state:
             for tab, res in zip(raw_tabs, all_results):
                 with tab:
                     st.dataframe(res['result'].df.head(100))
+                    _download_csv(res['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
+                                  "battwatt_simulatiedata.csv", key=f"raw_csv_{res['label']}")
         else:
             st.dataframe(all_results[0]['result'].df.head(100))
+            _download_csv(all_results[0]['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
+                          "battwatt_simulatiedata.csv", key="raw_csv_single")
 
 elif not uploaded_meter:
     st.info("👈 Upload je kwartiergegevens (P1-metergegevens per 15 minuten) in de zijbalk om de berekening te starten.")
