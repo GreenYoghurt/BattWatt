@@ -45,7 +45,7 @@ def main() -> None:
     # 2. Samenvoegen & Pre-processing
     merged_df = merge_data(meter_df, price_df, tolerance="15min")
     merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000  # EUR/MWh -> EUR/kWh
-    merged_df.set_index("timestamp", drop=False, inplace=True)
+    merged_df = merged_df.set_index("timestamp", drop=False)
 
     provider = get_providers()["Zonneplan"]
     billing = BillingEngine(provider)

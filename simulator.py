@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from models import SimulationResult
 from tqdm import tqdm
@@ -37,6 +38,7 @@ class Simulator:
         if progress_callback is None:
             iterable = tqdm(iterable, total=total_steps, desc="Simulating")
 
+        soc_values, adj_prod_values, adj_cons_values = [], [], []
         for i, (index, row) in enumerate(iterable):
             if progress_callback:
                 progress_callback(i + 1, total_steps)
@@ -70,11 +72,19 @@ class Simulator:
                 adj_prod = 0
                 adj_cons = -net_grid_energy
             
-            # Store results
-            result_df.at[index, 'battery_soc'] = self.battery.get_soc()
-            result_df.at[index, 'adjusted_production'] = adj_prod
-            result_df.at[index, 'adjusted_consumption'] = adj_cons
-            
+            # Store results (positionally; see the column assignment below)
+            soc_values.append(self.battery.get_soc())
+            adj_prod_values.append(adj_prod)
+            adj_cons_values.append(adj_cons)
+
+        # Assign by position, not with `.at[index, col]`: that creates new
+        # columns via a pattern pandas 4 turns into a KeyError, and with
+        # duplicate timestamps (DST fall-back) it overwrote every row sharing
+        # the label instead of just the current one.
+        result_df['battery_soc'] = np.asarray(soc_values, dtype=float)
+        result_df['adjusted_production'] = np.asarray(adj_prod_values, dtype=float)
+        result_df['adjusted_consumption'] = np.asarray(adj_cons_values, dtype=float)
+
         # Final totals
         final_soc_kwh = self.battery.get_soc_kwh()
         total_cycles = self.battery.total_discharged_kwh / self.battery.capacity_kwh if self.battery.capacity_kwh > 0 else 0

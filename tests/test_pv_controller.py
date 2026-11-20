@@ -23,7 +23,7 @@ def test_battwatt_pv_controller_e2e():
     meter_df = load_meter_data_HomeWizzard(PATH_DATA)
     merged_df = merge_data(meter_df, price_df, tolerance="15min")
     merged_df['day_ahead_price'] = merged_df['day_ahead_price']/1000 
-    merged_df.set_index("timestamp", drop=False, inplace=True)
+    merged_df = merged_df.set_index("timestamp", drop=False)
 
     # 2. RUN SIMULATION
     # Pin efficiency/standby power explicitly so this regression test doesn't
