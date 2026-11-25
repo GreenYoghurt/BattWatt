@@ -68,6 +68,10 @@ This distinction is the most financially significant correctness constraint in t
 
 **`plotter.py` — Matplotlib plotting for the CLI examples** (`example.py`, `example_mpc.py`). Unrelated to `app.py`'s Plotly charts.
 
+**`results_tables.py` — plain-data views of stored results.** The Kostenopbouw, sweep-summary and provider-comparison DataFrames (plus `SWEEP_*` constants) shared by `app.py` and `report.py`; no Streamlit. `app.py` imports them under its old `_underscore` names.
+
+**`report.py` — PDF report.** `build_report(result, include_fixed)` turns a stored `simulation_result`/`sweep_result` (plus its `report_context`: data source type, period, providers, acknowledged data checks — never a file name or meter values) into PDF bytes with fpdf2, redrawing the page's charts with matplotlib (Kaleido/Chromium isn't available on Streamlit Cloud). `app.py` imports it inside `try/except` and builds the PDF only when the download button is clicked, caching it on the result dict.
+
 ### DataFrame Conventions
 
 The merged simulation DataFrame (passed to `Simulator.run()`) must have a `DatetimeIndex` and contain:

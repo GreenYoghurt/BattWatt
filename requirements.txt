@@ -14,3 +14,5 @@ pyomo==6.11.0
 highspy==1.16.0
 entsoe-py==1.0.0
 requests==2.34.2
+fpdf2==2.9.0
+pypdf==7.1.1
