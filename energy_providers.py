@@ -1,9 +1,11 @@
 VAT_RATE = 0.21  # 21% btw
 
 def get_energy_tax_excl_vat(year: int=2025) -> float:
-    # energiebelasting + vermindering (alle bedragen EXCL. btw)
+    # energiebelasting elektriciteit per kWh, EXCL. btw
     if year == 2025:
-        return 0.1088  # €/kWh (schijf 1 en 2 samen)
+        # 2025: €0.10154 for both brackets 0-2,900 and 2,901-10,000 kWh
+        # (€0.1229 incl. btw, as on 2025 energy bills). Was 0.1088, the 2024 rate.
+        return 0.10154
     else:
         raise ValueError("Energy tax for the specified year is not available.")
 

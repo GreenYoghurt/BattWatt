@@ -45,8 +45,9 @@ dataset and computed by `Provider.calculate_flexible_costs_breakdown()`:
    ```
    marktprijs_inkoop = (1 + 21% VAT) * Σ(consumption_kwh[t] * day_ahead_price[t])
    ```
-2. **Energiebelasting** (energy tax) — a flat €0.1088/kWh (2025, brackets 1 & 2 combined),
-   VAT included. **This is where net metering (salderingsregeling) changes the outcome** — see
+2. **Energiebelasting** (energy tax) — a flat €0.10154/kWh excl. VAT (2025, the same rate for
+   brackets 0–2,900 and 2,901–10,000 kWh), so €0.1229/kWh incl. VAT as it appears on a 2025
+   energy bill. VAT is added on top. **This is where net metering (salderingsregeling) changes the outcome** — see
    below.
 3. **Leveranciersopslag inkoop** (supplier purchase mark-up) — `Provider.buying_fee` per kWh
    consumed. Entered in the app **VAT-inclusive**, so it's added as-is (unlike the wholesale

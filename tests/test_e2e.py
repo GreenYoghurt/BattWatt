@@ -123,8 +123,11 @@ def test_battwatt_e2e_simulation():
     # Financial Regression (Hardcoded based on net_metering=False)
     # Baseline uses per-interval netted flows (not raw verbruik/teruglevering) so
     # savings reflect only the battery contribution. Was 443.30 before the fix.
-    expected_baseline_cost = 430.73
-    expected_simulated_cost = 412.55
+    # Was 430.73 / 412.55 before correcting the 2025 energy tax from the 2024
+    # rate (0.1088) to 0.10154 €/kWh excl. VAT. The price controller charges
+    # from the grid, so the simulated cost drops more than the baseline.
+    expected_baseline_cost = 416.36
+    expected_simulated_cost = 391.19
     expected_cycles = 354.40
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
@@ -155,8 +158,9 @@ def test_e2e_slimme_meter_portal_format():
 
     _assert_energy_conservation(result)
 
-    expected_baseline_cost = -0.60
-    expected_simulated_cost = 0.49
+    # Was -0.60 / 0.49 before the 2025 energy tax correction (0.1088 -> 0.10154).
+    expected_baseline_cost = -0.65
+    expected_simulated_cost = 0.37
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
 
@@ -168,7 +172,8 @@ def test_e2e_single_column_format():
 
     _assert_energy_conservation(result)
 
-    expected_baseline_cost = 102.22
-    expected_simulated_cost = 92.27
+    # Was 102.22 / 92.27 before the 2025 energy tax correction (0.1088 -> 0.10154).
+    expected_baseline_cost = 99.97
+    expected_simulated_cost = 89.03
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05
