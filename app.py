@@ -1099,15 +1099,7 @@ else:
         idx_in_list = st.session_state.battery_ids.index(bid) + 1
         expander_label = f"Batterij {idx_in_list}: {st.session_state[f'bat_label_{bid}']}"
         with st.sidebar.expander(expander_label, expanded=(idx_in_list == 1)):
-            col_l, col_d = st.columns([5, 1])
-            with col_l:
-                st.text_input("Label", key=f"bat_label_{bid}")
-            with col_d:
-                st.write("")
-                if len(st.session_state.battery_ids) > 1:
-                    if st.button("🗑", key=f"del_{bid}"):
-                        st.session_state.battery_ids.remove(bid)
-                        st.rerun()
+            st.text_input("Label", key=f"bat_label_{bid}")
 
             preset_default_idx = (_battery_preset_options.index(st.session_state[f"bat_preset_{bid}"])
                                   if st.session_state[f"bat_preset_{bid}"] in _battery_preset_options else 1)
@@ -1131,6 +1123,14 @@ else:
                     "Standby verbruik (W)", value=10.0, step=1.0, min_value=0.0, key=f"bat_standby_{bid}",
                     help="Continu sluipverbruik van de omvormer/BMS, ook wanneer de batterij niet laadt of ontlaadt."
                 )
+
+            # Full-width delete button below the fields (see issue #43): a 🗑 in
+            # a narrow side column got clipped to an unusable sliver in the sidebar.
+            if len(st.session_state.battery_ids) > 1:
+                if st.button("Verwijder deze batterij", icon=":material/delete:",
+                             key=f"del_{bid}", width="stretch"):
+                    st.session_state.battery_ids.remove(bid)
+                    st.rerun()
 
     if st.sidebar.button("➕ Batterij toevoegen", use_container_width=True):
         new_id = st.session_state.battery_counter
@@ -1195,15 +1195,7 @@ for pid in list(st.session_state.provider_ids):
     idx_in_list = st.session_state.provider_ids.index(pid) + 1
     with st.sidebar.expander(f"Leverancier {idx_in_list}: {st.session_state[f'prov_name_{pid}']}",
                              expanded=(idx_in_list == 1)):
-        col_l, col_d = st.columns([5, 1])
-        with col_l:
-            st.text_input("Naam energieleverancier (voor eigen documentatie)", key=f"prov_name_{pid}")
-        with col_d:
-            st.write("")
-            if len(st.session_state.provider_ids) > 1:
-                if st.button("🗑", key=f"del_prov_{pid}"):
-                    st.session_state.provider_ids.remove(pid)
-                    st.rerun()
+        st.text_input("Naam energieleverancier (voor eigen documentatie)", key=f"prov_name_{pid}")
 
         st.radio(
             "Type contract", ["Dynamisch contract", "Vast contract"], horizontal=True,
@@ -1237,6 +1229,13 @@ for pid in list(st.session_state.provider_ids):
                 "Leveranciersopslag teruglevering (€/kWh incl. BTW)", format="%.4f", key=f"prov_sell_{pid}",
                 help="Kosten die je leverancier rekent per kWh die je teruglevert aan het net (een negatieve vergoeding)."
             )
+
+        # Full-width delete button below the fields (see issue #43).
+        if len(st.session_state.provider_ids) > 1:
+            if st.button("Verwijder deze leverancier", icon=":material/delete:",
+                         key=f"del_prov_{pid}", width="stretch"):
+                st.session_state.provider_ids.remove(pid)
+                st.rerun()
 
 if st.sidebar.button("➕ Leverancier toevoegen", use_container_width=True,
                      help="Voeg een extra energiecontract toe om te vergelijken. De batterijsimulatie wordt één keer gedraaid; elke leverancier rekent daarna met dezelfde energiestromen."):

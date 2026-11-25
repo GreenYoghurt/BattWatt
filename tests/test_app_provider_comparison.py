@@ -87,7 +87,12 @@ def test_manual_batteries_with_two_providers(app):
 
 def test_removing_a_provider(app):
     _add_fixed_provider(app)
-    app.button(key="del_prov_1").click().run()
+    # Regression for #43: a bare 🗑 in a narrow column got clipped to a sliver
+    # in the sidebar; the delete button must be a labelled, full-width button.
+    delete = app.button(key="del_prov_1")
+    assert delete.label == "Verwijder deze leverancier"
+    assert delete.proto.icon == ":material/delete:"
+    delete.click().run()
     assert app.session_state["provider_ids"] == [0]
     assert not app.exception
     assert app.text_input(key="prov_name_0").value == "Mijn Leverancier"
