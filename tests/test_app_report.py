@@ -73,6 +73,26 @@ def test_report_button_after_manual_simulation(app):
     assert report.build_report(res).startswith(b"%PDF-")
 
 
+def test_report_download_file_name(app, monkeypatch):
+    # Issue #48. The deferred download's proto carries no file name, so record
+    # what app.py passes to st.download_button for the report button.
+    import streamlit as st
+
+    seen = []
+    original = st.download_button
+
+    def recording_download_button(label, *args, **kwargs):
+        if label == REPORT_LABEL:
+            seen.append(kwargs.get("file_name"))
+        return original(label, *args, **kwargs)
+
+    monkeypatch.setattr(st, "download_button", recording_download_button)
+    app.radio[1].set_value("Handmatige batterijen").run()
+    _start(app)
+    assert seen and set(seen) == {"JortApp_report.pdf"}
+    assert report.REPORT_FILENAME == "JortApp_report.pdf"
+
+
 def test_report_button_after_sweep_simulation(app):
     assert app.radio[1].value == "Batterijgrootte vergelijking"
     _start(app)
