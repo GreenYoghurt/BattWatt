@@ -66,8 +66,9 @@ def test_battwatt_pv_controller_e2e():
 
     # 5. FINANCIAL REGRESSION
     # Baseline uses per-interval netted flows. Was 254.83 before the fix.
-    expected_baseline_cost = 251.89
-    expected_simulated_cost = 176.88
+    # Was 251.89 / 176.88 before the 2025 energy tax correction (0.1088 -> 0.10154).
+    expected_baseline_cost = 249.45
+    expected_simulated_cost = 174.17
     
     assert abs(cost_baseline - expected_baseline_cost) < 0.05
     assert abs(cost_simulated - expected_simulated_cost) < 0.05

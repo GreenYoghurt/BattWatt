@@ -76,9 +76,14 @@ def test_mpc_e2e_simulation():
 
     # Financial Regression (Hardcoded based on Zonneplan with Bliq_10kwh_fast)
     # Baseline uses per-interval netted flows. Was 443.28 before the fix.
-    expected_cost_no_battery = 430.73
-    expected_cost_with_mpc = 96.78
-    expected_mpc_cycles = 207.15
+    # Was 430.73 / 96.78 / 207.15 cycles before correcting the 2025 energy tax
+    # from the 2024 rate (0.1088) to 0.10154 €/kWh excl. VAT. The MPC objective
+    # includes energy tax, so its dispatch changed too and
+    # tests/mpc_simulation_baseline.csv was regenerated for this (a real
+    # behaviour change, not solver noise).
+    expected_cost_no_battery = 416.36
+    expected_cost_with_mpc = 85.57
+    expected_mpc_cycles = 212.52
     
     assert abs(cost_no_battery - expected_cost_no_battery) < 0.05
     assert abs(cost_with_mpc - expected_cost_with_mpc) < 0.05
