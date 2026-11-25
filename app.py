@@ -11,12 +11,30 @@ from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
 from billing import BillingEngine, compare_providers
 from models import SimulationResult
+from results_tables import (
+    SWEEP_SIZES_KWH, SWEEP_SIZE_PRESETS, SWEEP_EFFICIENCIES,
+    breakdown_row_defs as _breakdown_row_defs,
+    breakdown_dataframe as _breakdown_dataframe,
+    sweep_summary_dataframe as _sweep_summary_dataframe,
+    unique_labels as _unique_labels,
+    contract_label as _contract_label,
+    provider_cost as _provider_cost,
+    provider_comparison_dataframe as _provider_comparison_dataframe,
+    sweep_provider_dataframe as _sweep_provider_dataframe,
+    cheapest_option as _cheapest_option,
+    all_option_costs as _all_option_costs,
+)
 # Failure reporting is optional: if the module is broken or a dependency is
 # missing, the app must still work, just without alerts.
 try:
     import error_reporting
 except Exception:  # noqa: BLE001
     error_reporting = None
+# The PDF report is optional too: without it the app just has no report button.
+try:
+    import report
+except Exception:  # noqa: BLE001
+    report = None
 import base64
 import time
 
@@ -103,22 +121,23 @@ def _download_csv(df, label, filename, key, index=False):
                        mime="text/csv", key=key)
 
 
-def _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed):
-    """Plain-table version of the unified Kostenopbouw, for copy/export."""
-    rows = [r for r in _breakdown_row_defs(breakdown_baseline) if include_fixed or not r[4]]
-    out = []
-    for label, key, is_credit, _vol, _fixed, tarief in rows:
-        sign = -1 if is_credit else 1
-        row = {"Post": label, "Tarief": tarief,
-               "Zonder batterij (€)": round(sign * breakdown_baseline[key], 2)}
-        for res in all_results:
-            row[f"{res['label']} (€)"] = round(sign * res['breakdown_simulated'][key], 2)
-        out.append(row)
-    total = {"Post": "Totaal", "Tarief": "", "Zonder batterij (€)": round(display_baseline, 2)}
-    for res, dc in zip(all_results, display_costs):
-        total[f"{res['label']} (€)"] = round(dc, 2)
-    out.append(total)
-    return pd.DataFrame(out)
+def _download_report(res_data, include_fixed, key):
+    """'Download volledig rapport' button. The PDF is only built when clicked
+    (deferred download) and cached on the stored result, per include_fixed, so
+    reruns stay fast and a second click doesn't rebuild it."""
+    if report is None:
+        return
+
+    def _build():
+        cache = res_data.setdefault('_report_pdf', {})
+        if include_fixed not in cache:
+            cache[include_fixed] = report.build_report(res_data, include_fixed=include_fixed)
+        return cache[include_fixed]
+
+    st.download_button("📄 Download volledig rapport (PDF)", _build, file_name="battwatt_rapport.pdf",
+                       mime="application/pdf", key=key, on_click="ignore",
+                       help="Instellingen, resultaten, kostenopbouw en grafieken van deze simulatie in één PDF. "
+                            "Het rapport wordt alleen in je sessie gemaakt en nergens opgeslagen.")
 
 
 def create_usage_chart(df, title="Verbruik vs Batterij Status"):
@@ -173,11 +192,6 @@ _battery_display_to_key = {
 }
 _battery_preset_options = list(_battery_display_to_key.keys()) + ["Handmatig invoeren (Custom)"]
 
-# Automatic battery-size x efficiency sweep ("Batterijgrootte vergelijking" mode)
-SWEEP_SIZES_KWH = [5, 10, 15, 20]
-SWEEP_SIZE_PRESETS = {5: "Bliq_5kwh", 10: "Bliq_10kwh", 15: "Bliq_15kwh", 20: "Bliq_20kwh"}
-SWEEP_EFFICIENCIES = [0.80, 0.90, 0.95]
-
 def _battery_from_id(bid):
     preset = st.session_state.get(f"bat_preset_{bid}", "10 kWh")
     if preset == "Handmatig invoeren (Custom)":
@@ -191,48 +205,6 @@ def _battery_from_id(bid):
     return get_battery(_battery_display_to_key[preset])
 
 # ── Unified breakdown comparison table ────────────────────────────────────────
-
-def _breakdown_row_defs(bd):
-    """Returns (label, key, is_credit, vol_key, is_fixed, tarief_str) row tuples for the
-    Kostenopbouw tables, tailored to the provider's contract type."""
-    def avg_per_kwh(cost_key, vol_key):
-        vol = bd[vol_key]
-        return bd[cost_key] / vol if vol else 0.0
-
-    fixed_rows = [
-        ("Abonnementskosten",    "abonnementskosten",    False, None, True,
-         f"€ {bd['tarief_abonnementskosten']:.2f}/jaar"),
-        ("Netbeheerskosten",     "netbeheerskosten",      False, None, True,
-         f"€ {bd['tarief_netbeheerskosten']:.2f}/jaar"),
-        ("Belastingvermindering", "belastingvermindering", True,  None, True,
-         f"€ {bd['tarief_belastingvermindering']:.2f}/jaar"),
-    ]
-
-    if bd.get("contract_type") == "fixed":
-        variable_rows = [
-            ("Normaaltarief",        "normaal_kosten",          False, "normaal_kwh",        False,
-             f"€ {bd['tarief_normaal_tarief']:.4f}/kWh"),
-            ("Daltarief",            "dal_kosten",              False, "dal_kwh",            False,
-             f"€ {bd['tarief_dal_tarief']:.4f}/kWh"),
-            ("Terugleververgoeding", "teruglevering_opbrengst", True,  "total_feed_in_kwh",  False,
-             f"€ {bd['tarief_terugleververgoeding']:.4f}/kWh"),
-        ]
-    else:
-        variable_rows = [
-            ("Marktprijs inkoop",                "marktprijs_inkoop",          False, "total_consumption_kwh", False,
-             f"gem. € {avg_per_kwh('marktprijs_inkoop', 'total_consumption_kwh'):.4f}/kWh"),
-            ("Energiebelasting",                 "energiebelasting",           False, "energiebelasting_kwh",  False,
-             f"€ {bd['tarief_energiebelasting_per_kwh']:.4f}/kWh"),
-            ("Leveranciersopslag inkoop",        "leveranciersopslag_inkoop",  False, "total_consumption_kwh", False,
-             f"€ {bd['tarief_leveranciersopslag_inkoop_per_kwh']:.4f}/kWh"),
-            ("Leveranciersopslag teruglevering", "leveranciersopslag_verkoop", False, "total_feed_in_kwh",     False,
-             f"€ {bd['tarief_leveranciersopslag_verkoop_per_kwh']:.4f}/kWh"),
-            ("Teruglevering opbrengst",          "teruglevering_opbrengst",    True,  "total_feed_in_kwh",     False,
-             f"gem. € {avg_per_kwh('teruglevering_opbrengst', 'total_feed_in_kwh'):.4f}/kWh"),
-        ]
-
-    return fixed_rows + variable_rows
-
 
 def _render_unified_breakdown(all_results, display_baseline, display_costs, breakdown_baseline, include_fixed):
     bd = breakdown_baseline
@@ -556,6 +528,7 @@ def _render_sweep_results(sweep_data):
         "Vaste kosten meenemen", value=True, key="sweep_include_fixed",
         help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken. De besparing verandert niet — vaste kosten zijn voor elke batterij en de baseline gelijk."
     )
+    _download_report(sweep_data, include_fixed_sweep, key="sweep_report_pdf")
     cost_baseline_display = sweep_data['cost_baseline'] if include_fixed_sweep else sweep_data['cost_baseline_variable']
     st.caption(
         f"Baseline (geen batterij): **€{cost_baseline_display:,.2f}** — "
@@ -579,14 +552,7 @@ def _render_sweep_results(sweep_data):
 
     with st.expander("Details per configuratie", expanded=False):
         cost_key = 'cost_total' if include_fixed_sweep else 'cost_variable'
-        cost_col = f"Totale kosten {'incl.' if include_fixed_sweep else 'excl.'} vaste kosten (€)"
-        summary_df = pd.DataFrame([{
-            "Batterijgrootte (kWh)": r['size_kwh'],
-            "Rendement": f"{r['efficiency']:.0%}",
-            cost_col: round(r[cost_key], 2),
-            "Besparing (€)": round(r['savings_variable'], 2),
-            "Batterij cycli": round(getattr(r['result'], 'total_cycles', 0.0), 1),
-        } for r in rows])
+        summary_df = _sweep_summary_dataframe(rows, include_fixed_sweep)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
         _download_csv(summary_df, "⬇️ Download tabel (CSV)", "battwatt_batterijgrootte_vergelijking.csv",
                       key="sweep_summary_csv")
@@ -607,42 +573,6 @@ _SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#8e5bd6", "#d6a12a", "#d63a6
 
 def _series_color(i):
     return _SERIES_COLORS[i % len(_SERIES_COLORS)]
-
-
-def _unique_labels(labels):
-    """Appends ' (2)', ' (3)', ... to repeated labels so they can serve as keys."""
-    seen, out = {}, []
-    for lbl in labels:
-        seen[lbl] = seen.get(lbl, 0) + 1
-        out.append(f"{lbl} ({seen[lbl]})" if seen[lbl] > 1 else lbl)
-    return out
-
-
-def _contract_label(contract_type):
-    return "Vast" if contract_type == "fixed" else "Dynamisch"
-
-
-def _provider_cost(entry, include_fixed, baseline=False):
-    """Cost of a compare_providers() entry (baseline=True) or result row."""
-    if baseline:
-        return entry['cost_baseline'] if include_fixed else entry['cost_baseline_variable']
-    return entry['cost_total'] if include_fixed else entry['cost_variable']
-
-
-def _provider_comparison_dataframe(comparison, battery_labels, include_fixed):
-    """One row per provider: yearly cost without and with each battery, then the
-    savings per battery (savings don't depend on include_fixed)."""
-    names = _unique_labels([c['name'] for c in comparison])
-    out = []
-    for name, c in zip(names, comparison):
-        row = {"Leverancier": name, "Contract": _contract_label(c['contract_type']),
-               "Zonder batterij (€)": round(_provider_cost(c, include_fixed, baseline=True), 2)}
-        for lbl, r in zip(battery_labels, c['results']):
-            row[f"{lbl} (€)"] = round(_provider_cost(r, include_fixed), 2)
-        for lbl, r in zip(battery_labels, c['results']):
-            row[f"Besparing {lbl} (€)"] = round(r['savings'], 2)
-        out.append(row)
-    return pd.DataFrame(out)
 
 
 def _build_provider_comparison_charts(comparison, battery_labels, include_fixed):
@@ -682,17 +612,8 @@ def _build_provider_comparison_charts(comparison, battery_labels, include_fixed)
 def _cheapest_caption(comparison, option_labels, option_costs):
     """'Laagste jaarkosten: X — Y (€..)' over every provider × option combination.
     option_costs(entry) returns one cost per label in option_labels."""
-    names = _unique_labels([c['name'] for c in comparison])
-    best = min(((cost, name, lbl)
-                for name, c in zip(names, comparison)
-                for lbl, cost in zip(option_labels, option_costs(c))),
-               key=lambda t: t[0])
-    return f"💡 Laagste jaarkosten: **{best[1]}** {best[2]}: **€{best[0]:,.2f}**"
-
-
-def _all_option_costs(include_fixed):
-    return lambda c: ([_provider_cost(c, include_fixed, baseline=True)]
-                      + [_provider_cost(r, include_fixed) for r in c['results']])
+    cost, name, lbl = _cheapest_option(comparison, option_labels, option_costs)
+    return f"💡 Laagste jaarkosten: **{name}** {lbl}: **€{cost:,.2f}**"
 
 
 def _render_provider_comparison(comparison, battery_labels, include_fixed):
@@ -718,27 +639,6 @@ def _render_provider_comparison(comparison, battery_labels, include_fixed):
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
                   "battwatt_leveranciersvergelijking.csv", key="provider_comparison_csv")
-
-
-def _sweep_provider_dataframe(comparison, rows, include_fixed):
-    """Long-format table: one line per provider × battery configuration, with a
-    'geen batterij' line (0 kWh) per provider first."""
-    names = _unique_labels([c['name'] for c in comparison])
-    cost_col = f"Totale kosten {'incl.' if include_fixed else 'excl.'} vaste kosten (€)"
-    out = []
-    for name, c in zip(names, comparison):
-        contract = _contract_label(c['contract_type'])
-        out.append({"Leverancier": name, "Contract": contract,
-                    "Batterijgrootte (kWh)": 0, "Rendement": "—",
-                    cost_col: round(_provider_cost(c, include_fixed, baseline=True), 2),
-                    "Besparing (€)": 0.0})
-        for sweep_row, r in zip(rows, c['results']):
-            out.append({"Leverancier": name, "Contract": contract,
-                        "Batterijgrootte (kWh)": sweep_row['size_kwh'],
-                        "Rendement": f"{sweep_row['efficiency']:.0%}",
-                        cost_col: round(_provider_cost(r, include_fixed), 2),
-                        "Besparing (€)": round(r['savings'], 2)})
-    return pd.DataFrame(out)
 
 
 def _build_sweep_provider_charts(comparison, rows, include_fixed, efficiency=0.90):
@@ -1379,7 +1279,30 @@ def _prepare_simulation_data(meter_df):
     return merged_df, baseline_result, billing, cost_baseline, breakdown_baseline
 
 
-def _run_simulation(meter_df):
+def _report_context(merged_df, acknowledged_checks):
+    """Settings for the PDF report that the results themselves don't carry.
+    Deliberately no file name and no meter values: only the source type and
+    the period covered."""
+    if meter_source != "Bestand upload":
+        data_source = "SlimmeMeterPortal API"
+    elif custom_mapping:
+        data_source = "Bestand upload (aangepaste mapping)"
+    else:
+        data_source = "Bestand upload (automatisch herkend formaat)"
+    ts = merged_df['timestamp']
+    interval_minutes = (ts.iloc[1] - ts.iloc[0]).total_seconds() / 60 if len(ts) > 1 else None
+    return {
+        'data_source': data_source,
+        'period_start': ts.min(),
+        'period_end': ts.max(),
+        'n_intervals': len(ts),
+        'interval_minutes': interval_minutes,
+        'providers': list(providers),
+        'acknowledged_checks': [(c.title, c.message) for c in acknowledged_checks],
+    }
+
+
+def _run_simulation(meter_df, acknowledged_checks=()):
     """Fetch prices, run baseline + all battery configs sequentially, store results."""
     with st.status("Data verwerken en simulatie uitvoeren...", expanded=True) as status:
         merged_df, baseline_result, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
@@ -1437,11 +1360,12 @@ def _run_simulation(meter_df):
             'strategy': strategy_map[selected_strategy],
             'provider_name': provider.name,
             'provider_comparison': provider_comparison,
+            'report_context': _report_context(merged_df, acknowledged_checks),
         }
         st.session_state.pop('sweep_result', None)
 
 
-def _run_sweep_simulation(meter_df):
+def _run_sweep_simulation(meter_df, acknowledged_checks=()):
     """Fetch prices, then run the automatic battery size x efficiency grid
     (SWEEP_SIZES_KWH x SWEEP_EFFICIENCIES) and store the results."""
     with st.status("Data verwerken en sweep-simulatie uitvoeren...", expanded=True) as status:
@@ -1512,16 +1436,18 @@ def _run_sweep_simulation(meter_df):
             'strategy': strategy_map[selected_strategy],
             'provider_name': provider.name,
             'provider_comparison': provider_comparison,
+            'report_context': _report_context(merged_df, acknowledged_checks),
         }
         st.session_state.pop('simulation_result', None)
 
 
-def _run_selected_simulation(meter_df):
-    """Dispatch to the manual or sweep runner based on the current battery_mode."""
+def _run_selected_simulation(meter_df, acknowledged_checks=()):
+    """Dispatch to the manual or sweep runner based on the current battery_mode.
+    acknowledged_checks: failed data checks the user chose to run anyway (for the report)."""
     if battery_mode == "Batterijgrootte vergelijking":
-        _run_sweep_simulation(meter_df)
+        _run_sweep_simulation(meter_df, acknowledged_checks)
     else:
-        _run_simulation(meter_df)
+        _run_simulation(meter_df, acknowledged_checks)
 
 
 if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
@@ -1580,8 +1506,9 @@ if 'pending_simulation' in st.session_state:
     st.divider()
     if st.button("▶ Analyse alsnog uitvoeren", type="primary"):
         meter_df = st.session_state['pending_simulation']['meter_df']
+        acknowledged = st.session_state['pending_simulation']['failed_checks']
         del st.session_state['pending_simulation']
-        _run_selected_simulation(meter_df)
+        _run_selected_simulation(meter_df, acknowledged)
         st.rerun()
 
 elif 'sweep_result' in st.session_state:
@@ -1606,6 +1533,7 @@ elif 'simulation_result' in st.session_state:
         "Vaste kosten meenemen", value=True,
         help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te vergelijken."
     )
+    _download_report(res_data, include_fixed, key="report_pdf")
 
     def _display_cost(res):
         bd = res['breakdown_simulated']

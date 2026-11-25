@@ -38,6 +38,7 @@ numbers are actually produced, see:
   - Itemised cost-breakdown table comparing baseline vs. each simulated battery.
   - Comparison of multiple energy contracts (dynamic or fixed): yearly cost and savings per provider, computed on the same battery simulation (see [cost calculation](docs/cost-calculation.md#comparing-energy-providers)).
 - **Visualization**: Interactive Plotly charts (energy flow, SoC, market price) and a visual progress bar for long-running simulations.
+- **PDF report**: one "📄 Download volledig rapport (PDF)" button bundles the settings (data source and period, batteries, providers, strategy), the results overview, cost breakdown, provider comparison or battery-size sweep table, the charts and any acknowledged data-quality warnings into a Dutch PDF. It is built in memory only when clicked (`report.py`, fpdf2 + matplotlib) and contains no file name or raw meter values.
 
 ## Installation
 
@@ -69,6 +70,7 @@ streamlit run app.py
 3. Configure your energy provider's fees (optionally add more providers to compare contracts) and choose a control strategy (PV self-consumption or MPC cost-optimal).
 4. An ENTSO-E API key must be set in `.streamlit/secrets.toml` (as `ENTSOE_API_KEY`) for automated price fetching — the **🚀 Start Simulatie** button is disabled without it. A `SLIMMEMETERPORTAL_API_KEY` secret can also be set to pre-fill the SlimmeMeterPortal API key field.
 5. Click **🚀 Start Simulatie** and review the results overview, cost breakdown, and interactive charts.
+6. Optionally click **📄 Download volledig rapport (PDF)** at the top of the results for a PDF of the whole run.
 
 #### Failure alerts and the fix agent (optional)
 
