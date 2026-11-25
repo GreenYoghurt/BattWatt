@@ -46,11 +46,12 @@ curtailed" is exactly the scenario it cannot see or simulate.
 ## Tariffs are locked to 2025, and to a hardcoded DSO
 
 `get_energy_tax_excl_vat()` and `get_tax_discount()` (`energy_providers.py`) only have data for
-2025 and raise a `ValueError` for any other year. The grid operator fee defaults to Enexis
-(`BillingEngine(dso='Enexis')`) and **the web app never exposes a DSO selector**, so every
-simulation run through `app.py` uses Enexis 2025 tariffs for `netbeheerskosten`, regardless of
-your actual grid operator. Other DSOs (Liander, Stedin, Westland Infra, Coteq, RENDO) have
-constants defined but aren't reachable from the UI.
+2025 and raise a `ValueError` for any other year. The grid operator fee defaults to Liander
+(`energy_providers.DEFAULT_DSO`, used by `BillingEngine` and `Provider.get_fixed_costs()`) and
+**the web app never exposes a DSO selector**, so every simulation run through `app.py` uses
+Liander 2025 tariffs for `netbeheerskosten`, regardless of your actual grid operator. Other DSOs
+(Enexis, Stedin, Westland Infra, Coteq, RENDO) have constants defined but aren't reachable from
+the UI. The grid fee is a fixed cost, so it shifts total costs but never the savings.
 
 ## Fixed costs assume a full year of data
 

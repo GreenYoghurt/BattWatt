@@ -17,7 +17,7 @@ app's "Kostenopbouw" tables, so the code and the UI use exactly the same numbers
 | Component | Source | 2025 value |
 |---|---|---|
 | Abonnementskosten (subscription) | `Provider.subscription_cost` — user input | e.g. €75/year |
-| Netbeheerskosten (grid operator fee) | `get_grid_operator_fee(dso)` | €475.92/year (Enexis) |
+| Netbeheerskosten (grid operator fee) | `get_grid_operator_fee(dso)` | €455.73/year (Liander, the default) |
 | Belastingvermindering (tax credit) | `get_tax_discount(year)` | −€635.19/year |
 
 ```
@@ -195,6 +195,6 @@ applies to the comparison too.
 `energy_providers.py` hardcodes 2025 tariffs and a small set of DSOs (Enexis, Liander, Stedin,
 Westland Infra, Coteq, RENDO). `get_energy_tax_excl_vat()` and `get_tax_discount()` raise a
 `ValueError` for any year other than 2025 — there's no multi-year tariff table yet. The web app
-never lets the user pick a DSO, so `BillingEngine`'s default (`dso='Enexis'`) is what every
-simulation actually uses. To add a new year or DSO, extend the constant-returning functions in
+never lets the user pick a DSO, so the default `DEFAULT_DSO = 'Liander'` (used by
+`BillingEngine` and `Provider.get_fixed_costs()`) is what every simulation actually uses. To add a new year or DSO, extend the constant-returning functions in
 `energy_providers.py`.
