@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from data_loader import SmartLoader, load_price_data, fetch_entsoe_prices, merge_data, SlimmeMeterPortalAPILoader, EntsoeFetchError
 from slimmemeterportal_client import SlimmeMeterPortalClient, SlimmeMeterPortalError, flatten_usage_range, find_missing_dates
-from energy_providers import Provider
+from energy_providers import Provider, get_energy_tax_incl_vat, tariff_incl_energy_tax
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
@@ -1165,17 +1165,39 @@ def _init_provider_state(pid, name):
         st.session_state.setdefault(f"{field}_{pid}", default)
 
 
+# Required choice for fixed contracts: whether the entered normaal/dal tariffs
+# already include energy tax. Deliberately has no default (index=None), so the
+# user has to look at their tariff card; see `_fixed_tariffs_all_in`.
+_EB_INCL = "Inclusief energiebelasting"
+_EB_EXCL = "Exclusief energiebelasting"
+
+
+def _fixed_tariffs_all_in(pid):
+    """(normaal, dal) as all-in tariffs, adding energy tax if entered without it."""
+    normaal = st.session_state.get(f"prov_normaal_{pid}", _PROVIDER_DEFAULTS["prov_normaal"])
+    dal = st.session_state.get(f"prov_dal_{pid}", _PROVIDER_DEFAULTS["prov_dal"])
+    if st.session_state.get(f"prov_eb_{pid}") == _EB_EXCL:
+        return tariff_incl_energy_tax(normaal), tariff_incl_energy_tax(dal)
+    return normaal, dal
+
+
+def _missing_energy_tax_choice(pid):
+    return (st.session_state.get(f"prov_type_{pid}") == "Vast contract"
+            and st.session_state.get(f"prov_eb_{pid}") not in (_EB_INCL, _EB_EXCL))
+
+
 def _provider_from_id(pid):
     """Builds a Provider from the sidebar widgets of provider `pid`."""
     get = lambda field: st.session_state.get(f"{field}_{pid}", _PROVIDER_DEFAULTS.get(field))
     name = st.session_state.get(f"prov_name_{pid}") or "Leverancier"
     if get("prov_type") == "Vast contract":
+        normaal, dal = _fixed_tariffs_all_in(pid)
         return Provider(
             name=name, subscription_cost=get("prov_sub"),
             buying_fee=0.0, selling_fee=0.0,
             net_metering=False, selling_fee_net_metering=False,
             contract_type="fixed",
-            normaal_tarief=get("prov_normaal"), dal_tarief=get("prov_dal"),
+            normaal_tarief=normaal, dal_tarief=dal,
             terugleververgoeding=get("prov_terug"),
         )
     return Provider(
@@ -1208,14 +1230,29 @@ for pid in list(st.session_state.provider_ids):
         )
 
         if st.session_state[f"prov_type_{pid}"] == "Vast contract":
+            st.radio(
+                "Zijn de normaal- en daltarieven inclusief of exclusief energiebelasting? (verplicht)",
+                [_EB_INCL, _EB_EXCL], index=None, key=f"prov_eb_{pid}",
+                help=("Kijk op je tariefkaart of jaarafrekening. Staat de energiebelasting als **aparte regel** "
+                      "vermeld (zoals bij o.a. Vandebron), dan zijn de tarieven **exclusief** energiebelasting. "
+                      f"De app telt dan €{get_energy_tax_incl_vat():.4f}/kWh (incl. BTW) op bij het normaal- en "
+                      "daltarief. Over teruglevering wordt geen energiebelasting geheven, dus de "
+                      "terugleververgoeding blijft ongewijzigd."),
+            )
             st.number_input(
                 "Normaaltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_normaal_{pid}",
-                help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 07:00 en 23:00."
+                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 07:00 en 23:00. Of de energiebelasting erin zit, geef je hierboven aan."
             )
             st.number_input(
                 "Daltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_dal_{pid}",
-                help="All-in leveringsprijs (incl. BTW en energiebelasting) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend."
+                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend. Of de energiebelasting erin zit, geef je hierboven aan."
             )
+            if st.session_state.get(f"prov_eb_{pid}") == _EB_EXCL:
+                normaal_all_in, dal_all_in = _fixed_tariffs_all_in(pid)
+                st.caption(f"Gerekend wordt met (incl. energiebelasting): normaal **€{normaal_all_in:.4f}**, "
+                           f"dal **€{dal_all_in:.4f}** per kWh.")
+            elif _missing_energy_tax_choice(pid):
+                st.caption(":red[Kies hierboven of de tarieven inclusief of exclusief energiebelasting zijn.]")
             st.number_input(
                 "Terugleververgoeding (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_terug_{pid}",
                 help="Vaste vergoeding per kWh die je teruglevert aan het net (geen saldering)."
@@ -1302,6 +1339,11 @@ if meter_data_ready:
         can_simulate = False
     if missing_battery_power:
         st.sidebar.error("⚠️ Vul max. laad- en ontlaadvermogen in voor handmatige batterijen.")
+        can_simulate = False
+    missing_eb = [i + 1 for i, pid in enumerate(st.session_state.provider_ids) if _missing_energy_tax_choice(pid)]
+    if missing_eb:
+        st.sidebar.error("⚠️ Geef bij " + ", ".join(f"Leverancier {i}" for i in missing_eb)
+                         + " aan of de tarieven inclusief of exclusief energiebelasting zijn.")
         can_simulate = False
 
 def _format_duration(seconds):

@@ -49,10 +49,52 @@ def _button(at, label):
     return next(b for b in at.button if b.label == label)
 
 
-def _add_fixed_provider(at):
+def _add_fixed_provider(at, energy_tax="Inclusief energiebelasting"):
     _button(at, "➕ Leverancier toevoegen").click().run()
     assert at.session_state["provider_ids"] == [0, 1]
     at.radio(key="prov_type_1").set_value("Vast contract").run()
+    if energy_tax is not None:
+        at.radio(key="prov_eb_1").set_value(energy_tax).run()
+
+
+def test_fixed_contract_requires_energy_tax_choice(app):
+    # The incl/excl energy tax choice has no default, so a fixed contract
+    # blocks the simulation until the user has looked at their tariff card.
+    _add_fixed_provider(app, energy_tax=None)
+    assert app.radio(key="prov_eb_1").value is None
+    assert _button(app, "🚀 Start Simulatie").disabled
+    assert any("Leverancier 2" in e.value and "energiebelasting" in e.value for e in app.error)
+
+    app.radio(key="prov_eb_1").set_value("Inclusief energiebelasting").run()
+    assert not _button(app, "🚀 Start Simulatie").disabled
+    assert not any("energiebelasting" in e.value for e in app.error)
+
+
+def test_dynamic_contract_needs_no_energy_tax_choice(app):
+    # Dynamic markups are always excl. energy tax (the app adds it), so no choice.
+    assert not _button(app, "🚀 Start Simulatie").disabled
+    with pytest.raises(KeyError):
+        app.radio(key="prov_eb_0")
+
+
+def test_excl_energy_tax_tariffs_are_converted_to_all_in(app):
+    from energy_providers import get_energy_tax_incl_vat
+
+    app.radio[1].set_value("Handmatige batterijen").run()
+    _add_fixed_provider(app, energy_tax="Exclusief energiebelasting")
+    app.number_input(key="prov_normaal_1").set_value(0.2118).run()
+    app.number_input(key="prov_dal_1").set_value(0.1726).run()
+    eb = get_energy_tax_incl_vat()
+    assert any(f"€{0.2118 + eb:.4f}" in c.value and f"€{0.1726 + eb:.4f}" in c.value for c in app.caption)
+
+    _button(app, "🚀 Start Simulatie").click().run()
+    assert not app.exception
+    fixed = app.session_state["simulation_result"]["provider_comparison"][1]
+    bd = fixed["breakdown_baseline"]
+    assert bd["tarief_normaal_tarief"] == pytest.approx(0.2118 + eb)
+    assert bd["tarief_dal_tarief"] == pytest.approx(0.1726 + eb)
+    # No energy tax on feed-in: the feed-in tariff is used as entered.
+    assert bd["tarief_terugleververgoeding"] == pytest.approx(0.09)
 
 
 def _subheaders(at):

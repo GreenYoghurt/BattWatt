@@ -7,6 +7,22 @@ def get_energy_tax_excl_vat(year: int=2025) -> float:
     else:
         raise ValueError("Energy tax for the specified year is not available.")
 
+def get_energy_tax_incl_vat(year: int = 2025) -> float:
+    """Energy tax per kWh including VAT, as it appears on a Dutch energy bill."""
+    return get_energy_tax_excl_vat(year) * (1 + VAT_RATE)
+
+
+def tariff_incl_energy_tax(tariff_incl_vat: float, year: int = 2025) -> float:
+    """All-in fixed-contract tariff from one quoted EXCLUDING energy tax.
+
+    Fixed-contract tariffs on `Provider` are all-in (incl. VAT and energy
+    tax), but many suppliers (e.g. Vandebron) quote the delivery price incl.
+    VAT and list the energy tax as a separate line. Only applies to
+    consumption tariffs: no energy tax is levied on feed-in.
+    """
+    return tariff_incl_vat + get_energy_tax_incl_vat(year)
+
+
 def get_tax_discount(year: int=2025) -> float:
     # tax discount for the whole year
     if year == 2025:
