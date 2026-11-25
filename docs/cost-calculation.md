@@ -115,6 +115,14 @@ never branches on it itself.
   VAT-inclusive and already include energiebelasting. Unlike the dynamic contract, there is no
   separate `energiebelasting` line in the fixed-contract cost breakdown — it's baked into the two
   per-kWh rates.
+- **Required: incl. or excl. energiebelasting.** Many suppliers (e.g. Vandebron) quote the
+  normaal/dal delivery price incl. VAT but list energiebelasting as a separate line, so entering
+  those prices directly would leave out ~€0.13/kWh. The app therefore requires the user to state,
+  per fixed contract, whether the entered normaal/dal tariffs include energiebelasting (no
+  default; "Start Simulatie" stays disabled until chosen). For "exclusief",
+  `energy_providers.tariff_incl_energy_tax()` adds `get_energy_tax_incl_vat()` to the normaal and
+  dal tariffs before they reach `Provider`. The terugleververgoeding is never adjusted: no
+  energiebelasting is levied on feed-in.
 
 ```
 flexible_costs = normaal_kwh * normaal_tarief + dal_kwh * dal_tarief
