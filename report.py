@@ -30,6 +30,9 @@ from results_tables import (
     sweep_provider_dataframe, sweep_summary_dataframe, unique_labels,
 )
 
+# File name of the "Download volledig rapport (PDF)" download (issue #48).
+REPORT_FILENAME = "JortApp_report.pdf"
+
 STRATEGY_LABELS = {
     "PV": "PV Prioriteit (Zelfconsumptie)",
     "MPC": "Kosten Optimaal (MPC)",

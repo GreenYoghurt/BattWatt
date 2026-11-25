@@ -134,7 +134,7 @@ def _download_report(res_data, include_fixed, key):
             cache[include_fixed] = report.build_report(res_data, include_fixed=include_fixed)
         return cache[include_fixed]
 
-    st.download_button("📄 Download volledig rapport (PDF)", _build, file_name="battwatt_rapport.pdf",
+    st.download_button("📄 Download volledig rapport (PDF)", _build, file_name=report.REPORT_FILENAME,
                        mime="application/pdf", key=key, on_click="ignore",
                        help="Instellingen, resultaten, kostenopbouw en grafieken van deze simulatie in één PDF. "
                             "Het rapport wordt alleen in je sessie gemaakt en nergens opgeslagen.")
