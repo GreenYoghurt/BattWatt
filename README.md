@@ -36,7 +36,7 @@ numbers are actually produced, see:
   - Net Metering (Salderingsregeling) — supported by the billing engine, not currently exposed in the web app (see [limitations](docs/assumptions-and-limitations.md)).
   - Custom provider fees (Subscription, Buying/Selling mark-ups).
   - Itemised cost-breakdown table comparing baseline vs. each simulated battery.
-  - Comparison of multiple energy contracts (dynamic or fixed): yearly cost and savings per provider, computed on the same battery simulation (see [cost calculation](docs/cost-calculation.md#comparing-energy-providers)).
+  - Comparison of multiple energy contracts (dynamic or fixed): yearly cost and savings per provider, computed on the same battery simulation, with an itemised "Kostenopbouw per leverancier" table (see [cost calculation](docs/cost-calculation.md#comparing-energy-providers)).
   - **Geen batterij** mode: just bill the current situation (yearly cost and its breakdown, optionally under several contracts) without simulating a battery (see [cost calculation](docs/cost-calculation.md#no-battery-mode-current-costs-only)).
 - **Visualization**: Interactive Plotly charts (energy flow, SoC, market price) and a visual progress bar for long-running simulations.
 - **PDF report**: one "📄 Download volledig rapport (PDF)" button bundles the settings (data source and period, batteries, providers, strategy), the results overview, cost breakdown, provider comparison or battery-size sweep table, the charts and any acknowledged data-quality warnings into a Dutch PDF. It is built in memory only when clicked (`report.py`, fpdf2 + matplotlib) and contains no file name or raw meter values.

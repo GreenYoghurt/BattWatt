@@ -322,3 +322,82 @@ def test_no_battery_report_without_baseline_df(merged_df, baseline):
     del data["baseline_df"]
     _, _, images = _read(report.build_report(data, generated_at=GENERATED_AT))
     assert images == 0
+
+
+def test_provider_breakdown_dataframe_mixes_contract_types(baseline):
+    """Kostenopbouw per leverancier: union of the rows of both contract types,
+    NaN where a row doesn't apply, amounts and totals from compare_providers()."""
+    from results_tables import provider_breakdown_dataframe
+    comparison = compare_providers([DYNAMIC, FIXED], baseline, [])
+    df = provider_breakdown_dataframe(comparison, include_fixed=True)
+    dyn, fix = (c["breakdown_baseline"] for c in comparison)
+
+    assert list(df.columns) == ["Post", "Dynamo Energie (€)", "Vastberaden BV (€)"]
+    rows = df.set_index("Post")
+    assert list(rows.index) == ["Abonnementskosten", "Netbeheerskosten", "Belastingvermindering",
+                                "Marktprijs inkoop", "Energiebelasting", "Leveranciersopslag inkoop",
+                                "Leveranciersopslag teruglevering", "Normaaltarief", "Daltarief",
+                                "Teruglevering opbrengst / Terugleververgoeding", "Totaal"]
+    assert rows.loc["Abonnementskosten", "Vastberaden BV (€)"] == pytest.approx(60.0)
+    assert rows.loc["Belastingvermindering", "Dynamo Energie (€)"] == pytest.approx(-round(dyn["belastingvermindering"], 2))
+    assert rows.loc["Energiebelasting", "Dynamo Energie (€)"] == pytest.approx(round(dyn["energiebelasting"], 2))
+    assert pd.isna(rows.loc["Energiebelasting", "Vastberaden BV (€)"])
+    assert rows.loc["Normaaltarief", "Vastberaden BV (€)"] == pytest.approx(round(fix["normaal_kosten"], 2))
+    assert pd.isna(rows.loc["Daltarief", "Dynamo Energie (€)"])
+    feed_in = "Teruglevering opbrengst / Terugleververgoeding"
+    assert rows.loc[feed_in, "Vastberaden BV (€)"] == pytest.approx(-round(fix["teruglevering_opbrengst"], 2))
+    for col, c in zip(df.columns[1:], comparison):
+        assert rows.loc["Totaal", col] == pytest.approx(round(c["cost_baseline"], 2))
+        # The rows add up to the total.
+        assert rows[col].iloc[:-1].sum() == pytest.approx(c["cost_baseline"], abs=0.06)
+
+    variable = provider_breakdown_dataframe(comparison, include_fixed=False)
+    assert "Abonnementskosten" not in list(variable["Post"])
+    assert variable.iloc[-1]["Vastberaden BV (€)"] == pytest.approx(round(comparison[1]["cost_baseline_variable"], 2))
+
+
+def test_provider_breakdown_dataframe_single_contract_type(baseline):
+    from results_tables import provider_breakdown_dataframe
+    comparison = compare_providers([DYNAMIC, DYNAMIC], baseline, [baseline])
+    df = provider_breakdown_dataframe(comparison, True, [("Accu", 0)])
+    # Same name twice keeps two sets of columns; no fixed-contract rows.
+    assert list(df.columns) == ["Post", "Dynamo Energie · zonder batterij (€)", "Dynamo Energie · Accu (€)",
+                                "Dynamo Energie (2) · zonder batterij (€)", "Dynamo Energie (2) · Accu (€)"]
+    assert "Normaaltarief" not in list(df["Post"])
+    assert list(df["Post"])[-2] == "Teruglevering opbrengst"
+    assert not df.isna().any().any()
+
+
+def test_manual_report_has_provider_breakdown(merged_df, baseline):
+    data = _manual_result(merged_df, baseline, [DYNAMIC, FIXED])
+    _, text, _ = _read(report.build_report(data, generated_at=GENERATED_AT))
+    assert "Kostenopbouw per leverancier" in text
+    assert "Normaaltarief" in text and "Daltarief" in text
+    assert "—" in text
+    fixed = data["provider_comparison"][1]
+    # 1 + 2 providers x 3 options = 7 columns: one table.
+    assert f"{fixed['breakdown_baseline']['normaal_kosten']:,.2f}" in text
+    assert f"{fixed['results'][1]['cost_total']:,.2f}" in text
+
+
+def test_sweep_report_splits_wide_provider_breakdown(merged_df, baseline):
+    data = _sweep_result(merged_df, baseline, [DYNAMIC, FIXED])
+    _, text, _ = _read(report.build_report(data, generated_at=GENERATED_AT))
+    assert "Kostenopbouw per leverancier" in text
+    assert "90% rendement" in text
+    # Too wide for one table: one per provider, without the rows that don't apply.
+    assert "Dynamo Energie · 20 kWh (€)" in text and "Vastberaden BV · 20 kWh (€)" in text
+    assert "Normaaltarief" in text and "Marktprijs inkoop" in text
+
+
+def test_no_battery_report_has_provider_breakdown(merged_df, baseline):
+    data = _no_battery_result(merged_df, baseline, [DYNAMIC, FIXED])
+    _, text, _ = _read(report.build_report(data, generated_at=GENERATED_AT))
+    assert "Kostenopbouw per leverancier" in text
+    assert "Vastberaden BV (€)" in text
+
+
+def test_single_provider_report_has_no_provider_breakdown(merged_df, baseline):
+    data = _manual_result(merged_df, baseline, [DYNAMIC])
+    _, text, _ = _read(report.build_report(data, generated_at=GENERATED_AT))
+    assert "Kostenopbouw per leverancier" not in text
