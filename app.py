@@ -9,7 +9,7 @@ from energy_providers import Provider, get_energy_tax_incl_vat, tariff_incl_ener
 from battery import get_battery, Battery
 from controllers import Controller_PV, Controller_MPC
 from simulator import Simulator
-from billing import BillingEngine, compare_providers
+from billing import BillingEngine, compare_providers, fixed_costs_from_breakdown
 from models import SimulationResult
 from results_tables import (
     SWEEP_SIZES_KWH, SWEEP_SIZE_PRESETS, SWEEP_EFFICIENCIES,
@@ -23,6 +23,7 @@ from results_tables import (
     sweep_provider_dataframe as _sweep_provider_dataframe,
     cheapest_option as _cheapest_option,
     all_option_costs as _all_option_costs,
+    NO_BATTERY_MODE,
 )
 # Failure reporting is optional: if the module is broken or a dependency is
 # missing, the app must still work, just without alerts.
@@ -143,10 +144,12 @@ def _download_report(res_data, include_fixed, key):
 def create_usage_chart(df, title="Verbruik vs Batterij Status"):
     conv = get_duration_conv(df)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['timestamp'], y=df['battery_soc'],
-                             name="Batterij SoC (%)", fill='tozeroy',
-                             line=dict(color='rgba(0, 128, 0, 0.2)', width=0),
-                             yaxis="y2"))
+    has_soc = 'battery_soc' in df  # no SoC in 'Geen batterij' mode
+    if has_soc:
+        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['battery_soc'],
+                                 name="Batterij SoC (%)", fill='tozeroy',
+                                 line=dict(color='rgba(0, 128, 0, 0.2)', width=0),
+                                 yaxis="y2"))
     fig.add_trace(go.Scatter(x=df['timestamp'], y=df['teruglevering'] * conv,
                              name="Zon-opbrengst (kW)",
                              line=dict(color='orange', width=2)))
@@ -157,10 +160,12 @@ def create_usage_chart(df, title="Verbruik vs Batterij Status"):
         title=title,
         xaxis_title="Tijd",
         yaxis=dict(title="Vermogen (kW)", side="left"),
-        yaxis2=dict(title="Batterij SoC (%)", side="right", overlaying="y", showgrid=False, range=[0, 105]),
         legend=dict(x=0, y=1.1, orientation="h"),
         hovermode="x unified"
     )
+    if has_soc:
+        fig.update_layout(yaxis2=dict(title="Batterij SoC (%)", side="right", overlaying="y",
+                                      showgrid=False, range=[0, 105]))
     return _style_figure(fig, height=500)
 
 def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
@@ -181,6 +186,64 @@ def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
         hovermode="x unified"
     )
     return _style_figure(fig, height=500)
+
+
+# ── Energy-flow charts with season weeks ──────────────────────────────────────
+
+# For periods longer than this, the energy-flow charts get tabs: the full
+# period plus the first week of a month per season.
+_LONG_PERIOD = pd.Timedelta(days=32)
+_SEASON_WEEKS = {
+    "❄️ Winter (Jan)": 1,
+    "🌱 Lente (Apr)": 4,
+    "☀️ Zomer (Jul)": 7,
+    "🍂 Herfst (Okt)": 10,
+}
+
+
+def _period_slices(df):
+    """[(tab name, frame), ...] for a long period, or None for a short one.
+
+    The first tab is the full period; then the first week of each season month
+    present in the data, or the first and last week if none of them is.
+    """
+    if df['timestamp'].max() - df['timestamp'].min() <= _LONG_PERIOD:
+        return None
+    slices = [("📊 Volledige Periode", df)]
+    for name, month in _SEASON_WEEKS.items():
+        in_month = df['timestamp'].dt.month == month
+        if in_month.any():
+            start = df.loc[in_month, 'timestamp'].min()
+            slices.append((name, df[(df['timestamp'] >= start) & (df['timestamp'] < start + pd.Timedelta(days=7))]))
+    if len(slices) == 1:
+        slices += [("Begin van periode", df.head(7 * 24 * 4)), ("Einde van periode", df.tail(7 * 24 * 4))]
+    return slices
+
+
+def _render_energy_flow(df, key_prefix, with_battery=True):
+    """Usage chart (+ price/SoC chart with a battery), with season-week tabs for
+    long periods. Shared by both battery modes and the 'Geen batterij' mode."""
+    usage_title = "Huisverbruik & Zon vs Batterij Status (%)" if with_battery else "Huisverbruik & Zon"
+    price_title = "Marktprijs vs Batterij SoC (kWh)"
+    slices = _period_slices(df)
+    if slices is None:
+        st.plotly_chart(create_usage_chart(df, title=usage_title), use_container_width=True,
+                        config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+        if with_battery:
+            st.plotly_chart(create_price_chart(df, title=price_title), use_container_width=True,
+                            config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        return
+    st.info("De gegevens beslaan een lange periode. Hieronder zie je representatieve weken voor "
+            "verschillende seizoenen en het totaaloverzicht.")
+    tabs = st.tabs([name for name, _ in slices])
+    for i, (tab, (name, plot_df)) in enumerate(zip(tabs, slices)):
+        title = "Volledige Periode" if i == 0 else name
+        with tab:
+            st.plotly_chart(create_usage_chart(plot_df, title=f"{usage_title} - {title}"),
+                            use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+            if with_battery:
+                st.plotly_chart(create_price_chart(plot_df, title=f"{price_title} - {title}"),
+                                use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
 
 # ── Battery configuration helpers ────────────────────────────────────────────
 
@@ -359,46 +422,7 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
                 col_diff.markdown(f"<span style='color:red'>**▲ € {abs(total_diff):,.2f}**</span>", unsafe_allow_html=True)
 
     with st.expander("Interactieve Energieflow", expanded=True):
-        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
-        if duration > pd.Timedelta(days=32):
-            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
-            seasons = {
-                "❄️ Winter (Jan)": 1,
-                "🌱 Lente (Apr)": 4,
-                "☀️ Zomer (Jul)": 7,
-                "🍂 Herfst (Okt)": 10,
-            }
-            available_seasons = {}
-            for name, month in seasons.items():
-                mask = result.df['timestamp'].dt.month == month
-                if mask.any():
-                    start_time = result.df[mask]['timestamp'].min()
-                    end_time = start_time + pd.Timedelta(days=7)
-                    available_seasons[name] = result.df[
-                        (result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)
-                    ]
-            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
-            if not available_seasons:
-                tab_names += ["Begin van periode", "Einde van periode"]
-            chart_tabs = st.tabs(tab_names)
-            for i, t_name in enumerate(tab_names):
-                with chart_tabs[i]:
-                    if i == 0:
-                        plot_df = result.df
-                        slice_title = "Volledige Periode"
-                    else:
-                        s_name = (list(available_seasons.keys())[i - 1]
-                                  if available_seasons
-                                  else ["Begin van periode", "Einde van periode"][i - 1])
-                        plot_df = (available_seasons[s_name]
-                                   if available_seasons
-                                   else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
-                        slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
-        else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        _render_energy_flow(result.df, key_prefix)
 
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
@@ -618,6 +642,9 @@ def _cheapest_caption(comparison, option_labels, option_costs):
 
 def _render_provider_comparison(comparison, battery_labels, include_fixed):
     st.subheader("Vergelijking energieleveranciers")
+    if not battery_labels:
+        _render_baseline_provider_comparison(comparison, include_fixed)
+        return
     st.caption(
         "Dezelfde batterijsimulatie, doorgerekend met elk contract. De besparing geldt per leverancier: "
         "kosten zonder batterij minus kosten met batterij bij diezelfde leverancier. "
@@ -639,6 +666,77 @@ def _render_provider_comparison(comparison, battery_labels, include_fixed):
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
                   "JortApp_leveranciersvergelijking.csv", key="provider_comparison_csv")
+
+
+def _render_baseline_provider_comparison(comparison, include_fixed):
+    """Provider comparison of 'Geen batterij' mode: only the yearly cost per
+    contract; there are no batteries and so no savings."""
+    st.caption("Je huidige situatie (zonder batterij), doorgerekend met elk contract.")
+    cost, name, _ = _cheapest_option(comparison, [""], _all_option_costs(include_fixed))
+    st.markdown(f"💡 Laagste jaarkosten: **{name}**: **€{cost:,.2f}**")
+    cost_fig, _ = _build_provider_comparison_charts(comparison, [], include_fixed)
+    cost_fig.update_layout(showlegend=False)
+    st.plotly_chart(cost_fig, use_container_width=True, config=PLOT_CONFIG, key="provider_cost_chart")
+    table_df = _provider_comparison_dataframe(comparison, [], include_fixed)
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
+    _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
+                  "JortApp_leveranciersvergelijking.csv", key="provider_comparison_csv")
+
+
+def _render_baseline_results(res_data):
+    """Results of 'Geen batterij' mode: the yearly cost of the current
+    situation, its Kostenopbouw and, with several providers, the comparison.
+    Nothing battery-related (savings, cycles, SoC, strategy) is shown."""
+    breakdown_baseline = res_data['breakdown_baseline']
+    provider_comparison = res_data.get('provider_comparison')
+
+    st.header("Resultaten Overzicht: huidige situatie")
+    if provider_comparison:
+        st.caption(f"📄 Overzicht en kostenopbouw hieronder: **{res_data['provider_name']}** (Leverancier 1). "
+                   "Zie 'Vergelijking energieleveranciers' voor de andere contracten.")
+    else:
+        st.caption(f"📄 Energieleverancier: **{res_data['provider_name']}** · zonder batterij")
+    include_fixed = st.checkbox(
+        "Vaste kosten meenemen", value=True, key="baseline_include_fixed",
+        help="Vaste kosten omvatten abonnementskosten, netbeheerskosten en belastingvermindering. Zet uit om alleen het variabele deel te zien."
+    )
+    _download_report(res_data, include_fixed, key="report_pdf")
+
+    cost = res_data['cost_baseline']
+    if not include_fixed:
+        cost -= fixed_costs_from_breakdown(breakdown_baseline)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Jaarkosten (huidige situatie)", f"€{cost:,.2f}")
+    col2.metric("Afname van het net", f"{breakdown_baseline['total_consumption_kwh']:,.0f} kWh")
+    col3.metric("Teruglevering aan het net", f"{breakdown_baseline['total_feed_in_kwh']:,.0f} kWh")
+    st.caption("⚠️ **Let op:** Deze waarden zijn schattingen op basis van je historische meetdata en de "
+               "marktprijzen in die periode. Je werkelijke rekening kan afwijken. Gebruik deze resultaten "
+               "enkel ter oriëntatie.")
+
+    st.divider()
+    with st.expander("Kostenopbouw", expanded=True):
+        _render_single_kostenopbouw(breakdown_baseline, include_fixed, cost)
+        table_df = _breakdown_dataframe([], breakdown_baseline, cost, [], include_fixed)
+        with st.expander("📋 Kostenopbouw als tabel (kopiëren / exporteren)"):
+            st.dataframe(table_df, use_container_width=True, hide_index=True)
+            _download_csv(table_df, "⬇️ Download kostenopbouw (CSV)", "JortApp_kostenopbouw.csv",
+                          key="breakdown_csv")
+
+    if provider_comparison:
+        st.divider()
+        _render_provider_comparison(provider_comparison, [], include_fixed)
+
+    st.divider()
+    st.subheader("Verbruik en teruglevering")
+    df = res_data['baseline_df']
+    # Same season-week tabs as the battery modes, without the battery lines/price chart.
+    _render_energy_flow(df, "baseline", with_battery=False)
+
+    with st.expander("Bekijk Ruwe Data"):
+        st.dataframe(df.head(100))
+        _download_csv(df, "⬇️ Download volledige data (CSV)", "JortApp_simulatiedata.csv",
+                      key="raw_csv_baseline")
 
 
 def _build_sweep_provider_charts(comparison, rows, include_fixed, efficiency=0.90):
@@ -971,11 +1069,17 @@ st.sidebar.divider()
 st.sidebar.subheader("🔋 Batterijen")
 
 battery_mode = st.sidebar.radio(
-    "Batterijconfiguratie", ["Batterijgrootte vergelijking", "Handmatige batterijen"],
-    help="**Handmatige batterijen:** stel zelf 1 of meer specifieke batterijen samen.\n\n**Batterijgrootte vergelijking:** draait automatisch 12 simulaties (4 groottes × 3 rendementen) en toont het effect van batterijgrootte op kosten en besparing."
+    "Batterijconfiguratie", ["Batterijgrootte vergelijking", "Handmatige batterijen", NO_BATTERY_MODE],
+    help="**Handmatige batterijen:** stel zelf 1 of meer specifieke batterijen samen.\n\n**Batterijgrootte vergelijking:** draait automatisch 12 simulaties (4 groottes × 3 rendementen) en toont het effect van batterijgrootte op kosten en besparing.\n\n**Geen batterij:** berekent alleen wat je huidige situatie kost, bijvoorbeeld om energiecontracten te vergelijken."
 )
+no_battery = battery_mode == NO_BATTERY_MODE
 
-if battery_mode == "Batterijgrootte vergelijking":
+if no_battery:
+    st.sidebar.caption(
+        "Er wordt geen batterij gesimuleerd: je ziet je jaarkosten en de kostenopbouw zoals je meetdata "
+        "nu zijn. Voeg hieronder meer leveranciers toe om contracten te vergelijken."
+    )
+elif battery_mode == "Batterijgrootte vergelijking":
     sizes_str = ", ".join(f"{s} kWh" for s in SWEEP_SIZES_KWH)
     eff_str = ", ".join(f"{e:.0%}" for e in SWEEP_EFFICIENCIES)
     st.sidebar.caption(
@@ -1189,34 +1293,42 @@ providers = [_provider_from_id(pid) for pid in st.session_state.provider_ids]
 provider = providers[0]
 contract_type_choice = "Vast contract" if provider.contract_type == "fixed" else "Dynamisch contract"
 if len(providers) > 1:
-    st.sidebar.caption(
-        f"De resultaten tonen een vergelijking van {len(providers)} leveranciers. "
-        f"**Leverancier 1** bepaalt de aansturing van de batterij en de gedetailleerde kostenopbouw."
+    if no_battery:
+        st.sidebar.caption(
+            f"De resultaten tonen een vergelijking van {len(providers)} leveranciers. "
+            f"**Leverancier 1** is de leverancier van het overzicht en de gedetailleerde kostenopbouw."
+        )
+    else:
+        st.sidebar.caption(
+            f"De resultaten tonen een vergelijking van {len(providers)} leveranciers. "
+            f"**Leverancier 1** bepaalt de aansturing van de batterij en de gedetailleerde kostenopbouw."
+        )
+
+# 4. Strategy (only relevant when a battery is simulated)
+strategy_map = {}
+selected_strategy = None
+if not no_battery:
+    st.sidebar.divider()
+    st.sidebar.subheader("🎛️ Aansturing")
+    if contract_type_choice == "Vast contract":
+        strategy_map = {
+            "PV Prioriteit (Zelfconsumptie)": "PV"
+        }
+        strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\nBij een vast contract is 'Kosten Optimaal (MPC)' niet beschikbaar: die strategie optimaliseert op de dynamische day-ahead prijs, terwijl je bij een vast contract een vlak normaal-/daltarief betaalt."
+    else:
+        strategy_map = {
+            "PV Prioriteit (Zelfconsumptie)": "PV",
+            "Kosten Optimaal (MPC)": "MPC"
+        }
+        strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
+    if len(providers) > 1:
+        strategy_help += (f"\n\nBij meerdere leveranciers bepaalt **Leverancier 1 ({provider.name})** de aansturing: "
+                          "de batterij wordt één keer gesimuleerd en elke leverancier rekent met dezelfde energiestromen. "
+                          "Kosten Optimaal (MPC) optimaliseert dus op de opslagen van Leverancier 1.")
+    selected_strategy = st.sidebar.selectbox(
+        "Selecteer Strategie", list(strategy_map.keys()),
+        help=strategy_help
     )
-
-st.sidebar.divider()
-
-# 4. Strategy
-st.sidebar.subheader("🎛️ Aansturing")
-if contract_type_choice == "Vast contract":
-    strategy_map = {
-        "PV Prioriteit (Zelfconsumptie)": "PV"
-    }
-    strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\nBij een vast contract is 'Kosten Optimaal (MPC)' niet beschikbaar: die strategie optimaliseert op de dynamische day-ahead prijs, terwijl je bij een vast contract een vlak normaal-/daltarief betaalt."
-else:
-    strategy_map = {
-        "PV Prioriteit (Zelfconsumptie)": "PV",
-        "Kosten Optimaal (MPC)": "MPC"
-    }
-    strategy_help = "**PV Prioriteit:** laadt de batterij direct op met zonnestroom en ontlaadt bij verbruik. Eenvoudig en snel.\n\n**Kosten Optimaal (MPC):** optimaliseert laden/ontladen op basis van de verwachte marktprijzen over de komende 24 uur. Geeft doorgaans een hogere besparing, maar vereist een goede prijsvoorspelling."
-if len(providers) > 1:
-    strategy_help += (f"\n\nBij meerdere leveranciers bepaalt **Leverancier 1 ({provider.name})** de aansturing: "
-                      "de batterij wordt één keer gesimuleerd en elke leverancier rekent met dezelfde energiestromen. "
-                      "Kosten Optimaal (MPC) optimaliseert dus op de opslagen van Leverancier 1.")
-selected_strategy = st.sidebar.selectbox(
-    "Selecteer Strategie", list(strategy_map.keys()),
-    help=strategy_help
-)
 
 # Price data always via API; manual upload kept in back-end only
 price_source = "Automatisch (ENTSO-E API)"
@@ -1484,16 +1596,45 @@ def _run_sweep_simulation(meter_df, acknowledged_checks=()):
         st.session_state.pop('simulation_result', None)
 
 
+def _run_baseline_only(meter_df, acknowledged_checks=()):
+    """'Geen batterij' mode: fetch prices and bill the current situation (the
+    same netted baseline as the battery runs), without simulating a battery.
+    Stored as a simulation_result with no batteries."""
+    with st.status("Data verwerken en kosten berekenen...", expanded=True) as status:
+        merged_df, baseline_result, billing, cost_baseline, breakdown_baseline = _prepare_simulation_data(meter_df)
+
+        provider_comparison = None
+        if len(providers) > 1:
+            st.write(f"Kosten berekenen voor {len(providers)} leveranciers...")
+            provider_comparison = compare_providers(providers, baseline_result, [])
+
+        status.update(label="Berekening Voltooid!", state="complete", expanded=False)
+        st.session_state['simulation_result'] = {
+            'cost_baseline': cost_baseline,
+            'breakdown_baseline': breakdown_baseline,
+            'all_results': [],
+            'baseline_df': baseline_result.df,
+            'strategy': None,
+            'provider_name': provider.name,
+            'provider_comparison': provider_comparison,
+            'report_context': _report_context(merged_df, acknowledged_checks),
+        }
+        st.session_state.pop('sweep_result', None)
+
+
 def _run_selected_simulation(meter_df, acknowledged_checks=()):
-    """Dispatch to the manual or sweep runner based on the current battery_mode.
+    """Dispatch to the manual, sweep or no-battery runner based on the current battery_mode.
     acknowledged_checks: failed data checks the user chose to run anyway (for the report)."""
-    if battery_mode == "Batterijgrootte vergelijking":
+    if no_battery:
+        _run_baseline_only(meter_df, acknowledged_checks)
+    elif battery_mode == "Batterijgrootte vergelijking":
         _run_sweep_simulation(meter_df, acknowledged_checks)
     else:
         _run_simulation(meter_df, acknowledged_checks)
 
 
-if st.sidebar.button("🚀 Start Simulatie", use_container_width=True, type="primary", disabled=not can_simulate):
+_start_label = "🚀 Bereken Kosten" if no_battery else "🚀 Start Simulatie"
+if st.sidebar.button(_start_label, use_container_width=True, type="primary", disabled=not can_simulate):
     try:
         if meter_source == "Bestand upload":
             meter_df, data_checks = SmartLoader.load_with_checks(uploaded_meter, config=custom_mapping)
@@ -1556,6 +1697,9 @@ if 'pending_simulation' in st.session_state:
 
 elif 'sweep_result' in st.session_state:
     _render_sweep_results(st.session_state['sweep_result'])
+
+elif 'simulation_result' in st.session_state and not st.session_state['simulation_result']['all_results']:
+    _render_baseline_results(st.session_state['simulation_result'])
 
 elif 'simulation_result' in st.session_state:
     res_data = st.session_state['simulation_result']
@@ -1672,46 +1816,7 @@ elif 'simulation_result' in st.session_state:
         if len(selected_indices) > 1:
             st.markdown(f"#### {pill_labels[idx]}")
 
-        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
-        if duration > pd.Timedelta(days=32):
-            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
-            seasons = {
-                "❄️ Winter (Jan)": 1,
-                "🌱 Lente (Apr)": 4,
-                "☀️ Zomer (Jul)": 7,
-                "🍂 Herfst (Okt)": 10,
-            }
-            available_seasons = {}
-            for name, month in seasons.items():
-                mask = result.df['timestamp'].dt.month == month
-                if mask.any():
-                    start_time = result.df[mask]['timestamp'].min()
-                    end_time = start_time + pd.Timedelta(days=7)
-                    available_seasons[name] = result.df[
-                        (result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)
-                    ]
-            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
-            if not available_seasons:
-                tab_names += ["Begin van periode", "Einde van periode"]
-            chart_tabs = st.tabs(tab_names)
-            for i, t_name in enumerate(tab_names):
-                with chart_tabs[i]:
-                    if i == 0:
-                        plot_df = result.df
-                        slice_title = "Volledige Periode"
-                    else:
-                        s_name = (list(available_seasons.keys())[i - 1]
-                                  if available_seasons
-                                  else ["Begin van periode", "Einde van periode"][i - 1])
-                        plot_df = (available_seasons[s_name]
-                                   if available_seasons
-                                   else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
-                        slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
-        else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        _render_energy_flow(result.df, key_prefix)
 
         if pos < len(selected_indices) - 1:
             st.divider()
@@ -1742,7 +1847,8 @@ zon je opwekt) en de actuele stroomprijzen.
 1. **Upload je kwartiergegevens** — een bestand van je slimme meter met data per 15 minuten,
    of we halen ze automatisch voor je op via SlimmeMeterPortal.nl.
 2. **Kies een batterij** — een standaardmodel, of vul zelf de grootte in. Je mag ook meerdere
-   batterijen tegelijk vergelijken.
+   batterijen tegelijk vergelijken. Wil je alleen weten wat je huidige situatie kost, bijvoorbeeld
+   om energiecontracten te vergelijken? Kies dan **Geen batterij**.
 3. **Vul je energieleverancier in** — wat je betaalt per maand en per kWh stroom.
 4. **Kies hoe de batterij wordt aangestuurd** — dit bepaalt wanneer de batterij automatisch
    laadt en ontlaadt:

@@ -64,7 +64,7 @@ This distinction is the most financially significant correctness constraint in t
 
 **`models.py`** — `SimulationResult` dataclass that carries both the timestep DataFrame (`df`) and aggregate totals.
 
-**`app.py` — Streamlit UI.** Lets the user configure meter data source, one or more battery configs, provider fees, and strategy, then runs the baseline plus each battery simulation sequentially and renders a unified cost-breakdown comparison and per-battery charts. Not part of the core simulation pipeline — treat it as a consumer of `SmartLoader`/`Simulator`/`BillingEngine`, not a place to add simulation logic.
+**`app.py` — Streamlit UI.** Lets the user configure meter data source, one or more battery configs, provider fees, and strategy, then runs the baseline plus each battery simulation sequentially and renders a unified cost-breakdown comparison and per-battery charts. In the "Geen batterij (alleen huidige kosten)" mode it only bills the baseline (stored as a `simulation_result` with an empty `all_results` plus `baseline_df`), with no strategy or battery output. Not part of the core simulation pipeline — treat it as a consumer of `SmartLoader`/`Simulator`/`BillingEngine`, not a place to add simulation logic.
 
 **`plotter.py` — Matplotlib plotting for the CLI examples** (`example.py`, `example_mpc.py`). Unrelated to `app.py`'s Plotly charts.
 

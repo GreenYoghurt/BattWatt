@@ -260,3 +260,65 @@ def test_duplicate_battery_labels_keep_their_own_column(merged_df, baseline):
     df = breakdown_dataframe(data["all_results"], data["breakdown_baseline"], data["cost_baseline"], costs, True)
     assert ["10 kWh (€)", "10 kWh (2) (€)"] == list(df.columns[-2:])
     assert list(df.iloc[-1, -2:]) == [round(c, 2) for c in costs]
+
+
+def _no_battery_result(merged_df, baseline, providers):
+    """A 'Geen batterij' simulation_result, as app._run_baseline_only stores it."""
+    billing = BillingEngine(providers[0])
+    return {
+        "cost_baseline": billing.calculate_bill(baseline),
+        "breakdown_baseline": billing.calculate_bill_breakdown(baseline),
+        "all_results": [],
+        "baseline_df": baseline.df,
+        "strategy": None,
+        "provider_name": providers[0].name,
+        "provider_comparison": (compare_providers(providers, baseline, []) if len(providers) > 1 else None),
+        "report_context": _context(merged_df, providers),
+    }
+
+
+def test_no_battery_single_provider(merged_df, baseline):
+    data = _no_battery_result(merged_df, baseline, [DYNAMIC])
+    _, text, images = _read(report.build_report(data, generated_at=GENERATED_AT))
+
+    assert "Geen batterij (alleen huidige kosten)" in text
+    assert "huidige situatie" in text
+    assert report.eur(data["cost_baseline"]) in text
+    assert "Kostenopbouw" in text and "Energiebelasting" in text
+    # Nothing battery-specific
+    assert "Aansturing" not in text
+    assert "PV Prioriteit" not in text
+    assert "Besparing" not in text and "cycli" not in text
+    assert "SoC" not in text
+    assert "Vergelijking energieleveranciers" not in text
+    assert images == 1  # usage chart of the full period, without SoC
+
+
+def test_no_battery_without_fixed_costs(merged_df, baseline):
+    data = _no_battery_result(merged_df, baseline, [DYNAMIC])
+    _, text, _ = _read(report.build_report(data, include_fixed=False, generated_at=GENERATED_AT))
+    variable = data["cost_baseline"] - fixed_costs_from_breakdown(data["breakdown_baseline"])
+    assert report.eur(variable) in text
+    assert "Abonnementskosten" not in text
+
+
+def test_no_battery_several_providers(merged_df, baseline):
+    data = _no_battery_result(merged_df, baseline, [DYNAMIC, FIXED])
+    _, text, images = _read(report.build_report(data, generated_at=GENERATED_AT))
+
+    assert "Vergelijking energieleveranciers" in text
+    assert "Vastberaden BV" in text
+    fixed_entry = data["provider_comparison"][1]
+    assert f"{fixed_entry['cost_baseline']:,.2f}" in text
+    cheapest = min(data["provider_comparison"], key=lambda c: c["cost_baseline"])
+    assert f"Laagste jaarkosten: {cheapest['name']}: {report.eur(cheapest['cost_baseline'])}" in text
+    assert "Besparing" not in text
+    assert images == 1 + 1  # usage chart plus the cost-per-provider chart (no savings chart)
+
+
+def test_no_battery_report_without_baseline_df(merged_df, baseline):
+    """An older stored result without 'baseline_df' still builds, just without the chart."""
+    data = _no_battery_result(merged_df, baseline, [DYNAMIC])
+    del data["baseline_df"]
+    _, _, images = _read(report.build_report(data, generated_at=GENERATED_AT))
+    assert images == 0

@@ -25,7 +25,7 @@ import pandas as pd
 
 from billing import fixed_costs_from_breakdown as fixed_costs
 from results_tables import (
-    SWEEP_SIZES_KWH, all_option_costs, breakdown_dataframe, cheapest_option,
+    NO_BATTERY_MODE, SWEEP_SIZES_KWH, all_option_costs, breakdown_dataframe, cheapest_option,
     contract_label, provider_comparison_dataframe, provider_cost,
     sweep_provider_dataframe, sweep_summary_dataframe, unique_labels,
 )
@@ -115,20 +115,23 @@ def usage_chart(df, title):
     """Huisverbruik & zon (kW) with the battery SoC (%) shaded behind them."""
     fig, ax = _new_figure()
     conv = _interval_factor(df)
-    ax2 = ax.twinx()
-    ax2.fill_between(df['timestamp'], df['battery_soc'], color="green", alpha=0.15, linewidth=0,
-                     label="Batterij SoC (%)")
-    ax2.set_ylim(0, 105)
-    ax2.set_ylabel("Batterij SoC (%)")
-    ax2.spines["top"].set_visible(False)
-    ax.set_zorder(ax2.get_zorder() + 1)
-    ax.patch.set_visible(False)
+    soc_handles = ([], [])
+    if 'battery_soc' in df:  # no SoC in 'Geen batterij' mode
+        ax2 = ax.twinx()
+        ax2.fill_between(df['timestamp'], df['battery_soc'], color="green", alpha=0.15, linewidth=0,
+                         label="Batterij SoC (%)")
+        ax2.set_ylim(0, 105)
+        ax2.set_ylabel("Batterij SoC (%)")
+        ax2.spines["top"].set_visible(False)
+        ax.set_zorder(ax2.get_zorder() + 1)
+        ax.patch.set_visible(False)
+        soc_handles = ax2.get_legend_handles_labels()
     ax.plot(df['timestamp'], df['teruglevering'] * conv, color="orange", linewidth=1.2, label="Zon-opbrengst (kW)")
     ax.plot(df['timestamp'], df['verbruik'] * conv, color="red", linewidth=0.9, label="Huisverbruik (kW)")
     ax.set_ylabel("Vermogen (kW)")
     ax.set_title(title, loc="left", fontsize=11)
-    handles = ax2.get_legend_handles_labels()[0] + ax.get_legend_handles_labels()[0]
-    labels = ax2.get_legend_handles_labels()[1] + ax.get_legend_handles_labels()[1]
+    handles = soc_handles[0] + ax.get_legend_handles_labels()[0]
+    labels = soc_handles[1] + ax.get_legend_handles_labels()[1]
     ax.legend(handles, labels, loc="upper left", ncol=3, fontsize=8, frameon=False)
     fig.autofmt_xdate()
     return _png(fig)
@@ -216,6 +219,8 @@ def provider_bar_charts(comparison, battery_labels, include_fixed):
     grouped(ax, cost_series)
     ax.set_title(f"Jaarkosten per leverancier ({suffix})", loc="left", fontsize=11)
     cost_png = _png(fig)
+    if not battery_labels:  # 'Geen batterij' mode: no savings to show
+        return (cost_png,)
 
     fig, ax = _new_figure(height=3.6)
     grouped(ax, [(lbl, [c['results'][i]['savings'] for c in comparison], _SERIES_COLORS[i % len(_SERIES_COLORS)])
@@ -406,16 +411,19 @@ def _settings_section(pdf, data, context, include_fixed, battery_mode):
         resolution = context.get('interval_minutes')
         pairs.append(("Meetintervallen", f"{context['n_intervals']:,}"
                       + (f" van {resolution:g} minuten" if resolution else "")))
+    pairs.append(("Batterijconfiguratie", battery_mode))
+    if battery_mode != NO_BATTERY_MODE:
+        pairs.append(("Aansturing", STRATEGY_LABELS.get(data['strategy'], data['strategy'])))
     pairs += [
-        ("Batterijconfiguratie", battery_mode),
-        ("Aansturing", STRATEGY_LABELS.get(data['strategy'], data['strategy'])),
         ("Vaste kosten meegenomen", "ja" if include_fixed else "nee"),
         ("Marktprijzen", "Day-ahead prijzen NL (ENTSO-E)"),
     ]
     pdf.key_values(pairs)
 
-    pdf.h3("Batterijen")
-    if 'rows' in data:
+    if battery_mode == NO_BATTERY_MODE:
+        pass  # nothing simulated, so no battery table
+    elif 'rows' in data:
+        pdf.h3("Batterijen")
         sizes = sorted({r['size_kwh'] for r in data['rows']})
         effs = sorted({r['efficiency'] for r in data['rows']})
         pdf.para(f"Automatische vergelijking van {len(sizes)} groottes × {len(effs)} rendementen "
@@ -427,13 +435,16 @@ def _settings_section(pdf, data, context, include_fixed, battery_mode):
         df = _battery_rows([(f"{s} kWh", first[s]) for s in sizes]).drop(columns="Rendement")
         pdf.data_table(df)
     else:
+        pdf.h3("Batterijen")
         pdf.data_table(_battery_rows([(r['label'], r['battery']) for r in data['all_results']]))
 
     pdf.h3("Energieleverancier(s)")
     providers = context.get('providers') or []
     if providers:
         if len(providers) > 1:
-            pdf.para("Leverancier 1 bepaalt de aansturing van de batterij en de gedetailleerde kostenopbouw.",
+            pdf.para("Leverancier 1 is de leverancier van het overzicht en de gedetailleerde kostenopbouw."
+                     if battery_mode == NO_BATTERY_MODE else
+                     "Leverancier 1 bepaalt de aansturing van de batterij en de gedetailleerde kostenopbouw.",
                      size=8.5, color=(90, 90, 90))
         pdf.data_table(_provider_rows(providers))
     elif data.get('provider_name'):
@@ -507,11 +518,44 @@ def _manual_sections(pdf, data, include_fixed):
             pdf.chart(price_chart(df, f"Marktprijs vs batterij SoC (kWh) – {slice_title}"))
 
 
+def _baseline_sections(pdf, data, include_fixed):
+    """'Geen batterij' mode: the cost of the current situation, its breakdown
+    and, with several providers, the comparison. No savings, cycles or SoC."""
+    bd_base = data['breakdown_baseline']
+    cost = data['cost_baseline'] - (fixed_costs(bd_base) if not include_fixed else 0.0)
+    comparison = data.get('provider_comparison')
+
+    pdf.h2("2. Resultaten overzicht: huidige situatie")
+    if comparison:
+        pdf.para(f"Overzicht en kostenopbouw voor {data.get('provider_name', 'Leverancier 1')} (Leverancier 1).",
+                 size=9, color=(90, 90, 90))
+    pdf.key_values([
+        ("Jaarkosten (zonder batterij)", eur(cost)),
+        ("Afname van het net", f"{bd_base['total_consumption_kwh']:,.0f} kWh"),
+        ("Teruglevering aan het net", f"{bd_base['total_feed_in_kwh']:,.0f} kWh"),
+    ])
+    pdf.h3("Kostenopbouw")
+    pdf.para("Bedragen in € per jaar; opbrengsten en kortingen zijn negatief.", size=8.5, color=(90, 90, 90))
+    pdf.data_table(breakdown_dataframe([], bd_base, cost, [], include_fixed))
+
+    if comparison:
+        _provider_section(pdf, comparison, [""], include_fixed,
+                          provider_comparison_dataframe(comparison, [], include_fixed),
+                          provider_bar_charts(comparison, [], include_fixed),
+                          "Je huidige situatie (zonder batterij), doorgerekend met elk contract.")
+
+    baseline_df = data.get('baseline_df')
+    if baseline_df is not None and not baseline_df.empty:
+        pdf.add_page()
+        pdf.h2(f"{4 if comparison else 3}. Verbruik en teruglevering")
+        pdf.chart(usage_chart(baseline_df, "Huisverbruik & zon – volledige periode"))
+
+
 def _provider_section(pdf, comparison, option_labels, include_fixed, table_df, charts, intro):
     pdf.h2("3. Vergelijking energieleveranciers")
     pdf.para(intro, size=9, color=(90, 90, 90))
     cost, name, lbl = cheapest_option(comparison, option_labels, all_option_costs(include_fixed))
-    pdf.para(f"Laagste jaarkosten: {name} {lbl}: {eur(cost)}", style="B")
+    pdf.para(f"Laagste jaarkosten: {name}{' ' + lbl if lbl else ''}: {eur(cost)}", style="B")
     pdf.data_table(table_df)
     for png in charts:
         pdf.chart(png)
@@ -552,14 +596,17 @@ def _sweep_sections(pdf, data, include_fixed):
 
 
 def build_report(data, include_fixed=True, generated_at=None):
-    """PDF bytes for a stored result: ``simulation_result`` (has 'all_results')
-    or ``sweep_result`` (has 'rows'). ``data['report_context']`` carries the
+    """PDF bytes for a stored result: ``simulation_result`` (has 'all_results';
+    empty in 'Geen batterij' mode, which then carries 'baseline_df') or
+    ``sweep_result`` (has 'rows'). ``data['report_context']`` carries the
     settings that aren't part of the results themselves (data source, period,
     providers, acknowledged data-quality warnings)."""
     generated_at = generated_at or datetime.now()
     context = data.get('report_context') or {}
     is_sweep = 'rows' in data
-    battery_mode = "Batterijgrootte vergelijking" if is_sweep else "Handmatige batterijen"
+    no_battery = not is_sweep and not data.get('all_results')
+    battery_mode = ("Batterijgrootte vergelijking" if is_sweep
+                    else NO_BATTERY_MODE if no_battery else "Handmatige batterijen")
 
     pdf = _ReportPDF(generated_at)
     pdf.add_page()
@@ -571,6 +618,8 @@ def build_report(data, include_fixed=True, generated_at=None):
     _settings_section(pdf, data, context, include_fixed, battery_mode)
     if is_sweep:
         _sweep_sections(pdf, data, include_fixed)
+    elif no_battery:
+        _baseline_sections(pdf, data, include_fixed)
     else:
         _manual_sections(pdf, data, include_fixed)
 

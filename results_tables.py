@@ -12,6 +12,10 @@ SWEEP_SIZES_KWH = [5, 10, 15, 20]
 SWEEP_SIZE_PRESETS = {5: "Bliq_5kwh", 10: "Bliq_10kwh", 15: "Bliq_15kwh", 20: "Bliq_20kwh"}
 SWEEP_EFFICIENCIES = [0.80, 0.90, 0.95]
 
+# Third "Batterijconfiguratie" choice: only bill the current situation (no
+# battery). Its stored result is a ``simulation_result`` with no batteries.
+NO_BATTERY_MODE = "Geen batterij (alleen huidige kosten)"
+
 
 def breakdown_row_defs(bd):
     """Returns (label, key, is_credit, vol_key, is_fixed, tarief_str) row tuples for the
