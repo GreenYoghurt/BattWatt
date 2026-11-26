@@ -139,9 +139,9 @@ def test_homewizard_apostrophe_prefixed_negatives(tmp_path):
     csv_path = tmp_path / "homewizard_quoted.csv"
     csv_path.write_text(
         "time,Import T1 kWh,Import T2 kWh,Export T1 kWh,Export T2 kWh,L1 max W,L2 max W,L3 max W\n"
-        "2025-01-02 09:30,100.000,50.000,10.000,5.000,129,30,373\n"
-        "2025-01-02 09:45,100.100,50.000,10.000,5.000,129,'-30,373\n"
-        "2025-01-02 10:00,100.200,50.000,10.000,5.050,'-133,'-212,134\n"
+        "2025-03-10 09:30,100.000,50.000,10.000,5.000,150,40,310\n"
+        "2025-03-10 09:45,100.100,50.000,10.000,5.000,150,'-40,310\n"
+        "2025-03-10 10:00,100.200,50.000,10.000,5.050,'-120,'-200,140\n"
     )
 
     df, checks = SmartLoader.load_with_checks(csv_path)

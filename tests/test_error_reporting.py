@@ -38,13 +38,13 @@ class FakeUpload(io.BytesIO):
         self.file_id = "test"
 
 
-def _unknown_format_upload(name="Fuikweg 12 meterdata.csv"):
+def _unknown_format_upload(name="Voorbeeldstraat 12 meterdata.csv"):
     # A value no numeric format could mean: "n.v.t." (Dutch "not applicable"). Deliberately
     # NOT something like "(30)", which a real export could use for -30 (accounting notation).
     return FakeUpload(
         HEADER
-        + "2025-01-02 09:30,27957.929,33283.872,2534.417,5951.063,129,30,373\n"
-        + "2025-01-02 09:45,27958.104,33283.872,2534.417,5951.063,129,n.v.t.,373\n",
+        + "2025-03-10 09:30,12345.678,23456.789,3456.789,4567.891,141,40,310\n"
+        + "2025-03-10 09:45,12345.853,23456.789,3456.789,4567.891,141,n.v.t.,310\n",
         name,
     )
 
@@ -77,18 +77,18 @@ def test_alert_contains_structure_but_no_data_or_file_name():
     assert "x.x.x." in text  # masked pattern of the offending value
     assert "HomeWizardLoader" in text
     # Never leaks data or the file name
-    for secret in ["Fuikweg", "27957", "33283", "2025-01-02", "n.v.t.", "129"]:
+    for secret in ["Voorbeeldstraat", "12345", "23456", "2025-03-10", "n.v.t.", "141"]:
         assert secret not in text, secret
 
 
 def test_alert_for_undetected_format_strips_file_name():
-    upload = FakeUpload("Datum;Stand 871234567890123456\n01-01-2025;12345,6\n", "Fuikweg 12.csv")
+    upload = FakeUpload("Datum;Stand 871234567890123456\n01-01-2025;12345,6\n", "Voorbeeldstraat 12.csv")
     with pytest.raises(ValueError) as exc_info:
         SmartLoader.load_with_checks(upload)
 
     text = build_alert(exc_info.value, describe_upload(upload), upload)
 
-    assert "Fuikweg" not in text
+    assert "Voorbeeldstraat" not in text
     assert "871234567890123456" not in text  # EAN-like number in a header
     assert "12345" not in text
 
