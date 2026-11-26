@@ -357,7 +357,7 @@ def build_alert(error: BaseException, info: Optional[Dict[str, Any]], upload: An
     return "\n".join(lines)
 
 
-def send_alert(webhook_url: Optional[str], text: str, title: str = "BattWatt: failure") -> bool:
+def send_alert(webhook_url: Optional[str], text: str, title: str = "JortApp: failure") -> bool:
     """Post a notification. Returns True on success; never raises."""
     if not webhook_url:
         return False
@@ -442,7 +442,7 @@ def report_failure(error: BaseException, *, source: str, settings: AlertSettings
             return False
 
         text = build_alert(error, info, upload, source, category, reason)
-        title = f"BattWatt {source} failure: {category}"
+        title = f"JortApp {source} failure: {category}"
         notified = send_alert(settings.webhook_url, text, title)
         if category == FIX:
             # Sanitise only the parts that aren't ours: the brackets are fixed text.

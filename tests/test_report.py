@@ -142,11 +142,27 @@ def _read(pdf_bytes):
     return reader, " ".join(text.split()), images
 
 
+def test_report_is_branded_jortapp(merged_df, baseline):
+    data = _manual_result(merged_df, baseline, [DYNAMIC])
+    pdf_bytes = report.build_report(data, generated_at=GENERATED_AT)
+    reader, text, _ = _read(pdf_bytes)
+
+    assert reader.metadata.title == "JortApp simulatierapport"
+    assert "JortApp simulatierapport" in text
+    assert "battwatt" not in text.lower()  # no old product name anywhere visible
+    # The docs link is clickable text; the URL (repo still named BattWatt) only
+    # lives in the link annotation.
+    assert "JortApp-documentatie" in text
+    uris = [a.get_object()["/A"].get("/URI") for page in reader.pages
+            for a in (page.get("/Annots") or []) if "/A" in a.get_object()]
+    assert report.DOCS_URL in uris
+
+
 def test_manual_single_provider(merged_df, baseline):
     data = _manual_result(merged_df, baseline, [DYNAMIC])
     reader, text, images = _read(report.build_report(data, generated_at=GENERATED_AT))
 
-    assert reader.metadata.title == "BattWatt simulatierapport"
+    assert reader.metadata.title == "JortApp simulatierapport"
     assert "25-11-2026" in text
     # Settings
     assert "06-06-2025 t/m 07-06-2025 (2 dagen)" in text

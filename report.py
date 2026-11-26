@@ -33,6 +33,9 @@ from results_tables import (
 # File name of the "Download volledig rapport (PDF)" download (issue #48).
 REPORT_FILENAME = "JortApp_report.pdf"
 
+# The repository keeps its name (BattWatt); users only see the link text.
+DOCS_URL = "https://github.com/GreenYoghurt/BattWatt/tree/main/docs"
+
 STRATEGY_LABELS = {
     "PV": "PV Prioriteit (Zelfconsumptie)",
     "MPC": "Kosten Optimaal (MPC)",
@@ -261,15 +264,15 @@ class _ReportPDF(FPDF):
         self.add_font(_FONT, "I", str(_FONT_DIR / "DejaVuSans-Oblique.ttf"))
         self.set_auto_page_break(auto=True, margin=16)
         self.set_margins(15, 15, 15)
-        self.set_title("BattWatt simulatierapport")
-        self.set_creator("BattWatt - Thuisbatterij Evaluator")
+        self.set_title("JortApp simulatierapport")
+        self.set_creator("JortApp - Thuisbatterij Evaluator")
         self.set_lang("nl")
 
     def footer(self):
         self.set_y(-12)
         self.set_font(_FONT, "", 8)
         self.set_text_color(130, 130, 130)
-        self.cell(0, 5, f"BattWatt simulatierapport · {self.generated_at:%d-%m-%Y %H:%M}", align="L")
+        self.cell(0, 5, f"JortApp simulatierapport · {self.generated_at:%d-%m-%Y %H:%M}", align="L")
         self.cell(0, 5, f"Pagina {self.page_no()}/{{nb}}", align="R")
         self.set_text_color(0, 0, 0)
 
@@ -301,6 +304,17 @@ class _ReportPDF(FPDF):
         self.set_text_color(*color)
         self.multi_cell(0, size * 0.5, text, align="L", new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(0, 0, 0)
+
+    def para_with_link(self, text, link_text, url, size=9.5):
+        """`text` followed by a clickable `link_text`; the raw URL isn't printed."""
+        self.set_font(_FONT, "", size)
+        self.write(size * 0.5, text)
+        self.set_text_color(0, 0, 238)
+        self.set_font(_FONT, "U", size)
+        self.write(size * 0.5, link_text, link=url)
+        self.set_text_color(0, 0, 0)
+        self.set_font(_FONT, "", size)
+        self.ln(size * 0.5)
         self.ln(1)
 
     def key_values(self, pairs):
@@ -549,7 +563,7 @@ def build_report(data, include_fixed=True, generated_at=None):
 
     pdf = _ReportPDF(generated_at)
     pdf.add_page()
-    pdf.h1("BattWatt simulatierapport")
+    pdf.h1("JortApp simulatierapport")
     pdf.para(f"Thuisbatterij Evaluator · gegenereerd op {generated_at:%d-%m-%Y} om {generated_at:%H:%M}",
              size=10, color=(90, 90, 90))
     pdf.para(DISCLAIMER, size=9, style="I", color=(150, 80, 0))
@@ -565,5 +579,7 @@ def build_report(data, include_fixed=True, generated_at=None):
     pdf.h2("Over dit rapport")
     pdf.para(DISCLAIMER, size=9)
     pdf.para(PRIVACY_NOTE, size=9)
-    pdf.para("Meer uitleg over de berekening: https://github.com/GreenYoghurt/BattWatt/tree/main/docs", size=9)
+    # Clickable text instead of the raw URL: the repository is still named
+    # BattWatt, but the product shown to users is JortApp.
+    pdf.para_with_link("Meer uitleg over de berekening: ", "JortApp-documentatie", DOCS_URL, size=9)
     return bytes(pdf.output())

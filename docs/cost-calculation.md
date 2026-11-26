@@ -1,6 +1,6 @@
 # How costs are calculated
 
-BattWatt estimates a full-year electricity bill twice — once for the situation as measured
+JortApp estimates a full-year electricity bill twice — once for the situation as measured
 (no battery) and once for each simulated battery — and reports the difference as "savings."
 Both bills are built from the same two ingredients:
 
