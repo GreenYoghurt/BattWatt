@@ -37,6 +37,7 @@ numbers are actually produced, see:
   - Custom provider fees (Subscription, Buying/Selling mark-ups).
   - Itemised cost-breakdown table comparing baseline vs. each simulated battery.
   - Comparison of multiple energy contracts (dynamic or fixed): yearly cost and savings per provider, computed on the same battery simulation (see [cost calculation](docs/cost-calculation.md#comparing-energy-providers)).
+  - **Geen batterij** mode: just bill the current situation (yearly cost and its breakdown, optionally under several contracts) without simulating a battery (see [cost calculation](docs/cost-calculation.md#no-battery-mode-current-costs-only)).
 - **Visualization**: Interactive Plotly charts (energy flow, SoC, market price) and a visual progress bar for long-running simulations.
 - **PDF report**: one "📄 Download volledig rapport (PDF)" button bundles the settings (data source and period, batteries, providers, strategy), the results overview, cost breakdown, provider comparison or battery-size sweep table, the charts and any acknowledged data-quality warnings into a Dutch PDF. It is built in memory only when clicked (`report.py`, fpdf2 + matplotlib) and contains no file name or raw meter values.
 
@@ -66,7 +67,7 @@ Launch the interactive dashboard:
 streamlit run app.py
 ```
 1. In the sidebar, choose a meter data source: upload a file (auto-detected format, or a custom column mapping) or fetch data live via the SlimmeMeterPortal API.
-2. Add one or more battery configurations to compare (presets or custom capacity/power/efficiency).
+2. Add one or more battery configurations to compare (presets or custom capacity/power/efficiency), let the app sweep battery sizes, or choose **Geen batterij (alleen huidige kosten)** to only calculate what your current situation costs.
 3. Configure your energy provider's fees (optionally add more providers to compare contracts) and choose a control strategy (PV self-consumption or MPC cost-optimal).
 4. An ENTSO-E API key must be set in `.streamlit/secrets.toml` (as `ENTSOE_API_KEY`) for automated price fetching — the **🚀 Start Simulatie** button is disabled without it. A `SLIMMEMETERPORTAL_API_KEY` secret can also be set to pre-fill the SlimmeMeterPortal API key field.
 5. Click **🚀 Start Simulatie** and review the results overview, cost breakdown, and interactive charts.

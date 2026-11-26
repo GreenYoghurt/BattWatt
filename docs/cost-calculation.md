@@ -149,6 +149,17 @@ in the loop. Each simulated bill uses the same formulas but with the battery-adj
 [Optimization & control](optimization-and-control.md)). Savings are simply
 `baseline_bill − simulated_bill`.
 
+## No-battery mode (current costs only)
+
+The third "Batterijconfiguratie" choice in the sidebar, **Geen batterij (alleen huidige kosten)**,
+skips the battery simulation altogether. The app still fetches the day-ahead prices and builds
+the same baseline as above (`teruglevering − verbruik` netted per interval), and bills it with the
+same `BillingEngine`. The results show the yearly cost of the current situation, its Kostenopbouw
+and the grid import/export volumes; savings, battery cycles, SoC charts and the strategy selector
+are hidden because they don't apply. With several providers, `compare_providers()` is called with
+an empty list of battery results, so the comparison shows only each contract's cost without
+battery (no savings). The CSV downloads and the PDF report work in this mode too.
+
 ## Comparing energy providers
 
 In the sidebar's "💶 Energieleverancier" section you can add more than one contract
