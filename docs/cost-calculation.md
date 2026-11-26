@@ -201,6 +201,17 @@ energieleveranciers" section appears:
 Both also name the cheapest provider/battery combination. The "Vaste kosten meenemen" toggle
 applies to the comparison too.
 
+Below the summary table, **Kostenopbouw per leverancier** shows the itemised bill of every provider
+side by side (fixed costs, market price, energy tax and mark-ups for a dynamic contract;
+normaal-/daltarief and terugleververgoeding for a fixed one; then the total), taken from the
+breakdowns `compare_providers()` returns. There is one column per provider without a battery and
+with each battery; in the size sweep only the 90%-efficiency sizes are included, to keep it
+readable. Because the two contract types have different cost items, the table holds the union of
+both, with "—" where an item doesn't belong to that contract (empty cells in the CSV download).
+The feed-in rows share one line ("Teruglevering opbrengst / Terugleververgoeding"). The PDF report
+contains the same table, split into one table per provider when it would be too wide for a page.
+In the no-battery mode it has one column per provider.
+
 ## Where the constants live
 
 `energy_providers.py` hardcodes 2025 tariffs and a small set of DSOs (Enexis, Liander, Stedin,

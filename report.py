@@ -26,8 +26,8 @@ import pandas as pd
 from billing import fixed_costs_from_breakdown as fixed_costs
 from results_tables import (
     NO_BATTERY_MODE, SWEEP_SIZES_KWH, all_option_costs, breakdown_dataframe, cheapest_option,
-    contract_label, provider_comparison_dataframe, provider_cost,
-    sweep_provider_dataframe, sweep_summary_dataframe, unique_labels,
+    contract_label, provider_breakdown_dataframe, provider_comparison_dataframe, provider_cost,
+    sweep_breakdown_options, sweep_provider_dataframe, sweep_summary_dataframe, unique_labels,
 )
 
 # File name of the "Download volledig rapport (PDF)" download (issue #48).
@@ -73,6 +73,8 @@ def eur(amount):
 
 
 def _cell(value):
+    if isinstance(value, float) and value != value:  # NaN: row doesn't apply
+        return "—"
     if isinstance(value, float):
         return f"{value:,.2f}"
     return str(value)
@@ -504,7 +506,8 @@ def _manual_sections(pdf, data, include_fixed):
                           provider_bar_charts(comparison, labels, include_fixed),
                           "Dezelfde batterijsimulatie, doorgerekend met elk contract. De besparing geldt per "
                           "leverancier: kosten zonder batterij minus kosten met batterij bij diezelfde leverancier. "
-                          "De aansturing van de batterij is bepaald door Leverancier 1.")
+                          "De aansturing van de batterij is bepaald door Leverancier 1.",
+                          breakdown_options=list(zip(labels, range(len(labels)))))
 
     pdf.add_page()
     pdf.h2(f"{4 if comparison else 3}. Energieflow per batterij")
@@ -551,12 +554,41 @@ def _baseline_sections(pdf, data, include_fixed):
         pdf.chart(usage_chart(baseline_df, "Huisverbruik & zon – volledige periode"))
 
 
-def _provider_section(pdf, comparison, option_labels, include_fixed, table_df, charts, intro):
+# The Kostenopbouw per leverancier is split into one table per provider beyond this many columns.
+_MAX_BREAKDOWN_COLUMNS = 7
+
+
+def _provider_breakdown_section(pdf, comparison, include_fixed, options, note=None):
+    df = provider_breakdown_dataframe(comparison, include_fixed, options)
+    if len(df.columns) <= _MAX_BREAKDOWN_COLUMNS:
+        tables = [df]
+    else:  # too wide for one page: one table per provider, without rows that don't apply
+        tables = [provider_breakdown_dataframe([entry], include_fixed, options) for entry in comparison]
+        tables = [t.dropna(how="all", subset=t.columns[1:]) for t in tables]
+
+    def table_height(table):  # about 5 mm per row plus a 3-line header
+        return (len(table) + 3) * 5
+
+    # Keep the heading with the first table, and each table on one page.
+    if pdf.get_y() + 20 + table_height(tables[0]) > pdf.h - pdf.b_margin:
+        pdf.add_page()
+    pdf.h3("Kostenopbouw per leverancier")
+    pdf.para((note + " " if note else "") + "Bedragen in € per jaar; opbrengsten en kortingen zijn negatief. "
+             "'—' betekent dat de post niet bij dat type contract hoort.", size=8.5, color=(90, 90, 90))
+    for table in tables:
+        if pdf.get_y() + table_height(table) > pdf.h - pdf.b_margin:
+            pdf.add_page()
+        pdf.data_table(table)
+
+
+def _provider_section(pdf, comparison, option_labels, include_fixed, table_df, charts, intro,
+                      breakdown_options=(), breakdown_note=None):
     pdf.h2("3. Vergelijking energieleveranciers")
     pdf.para(intro, size=9, color=(90, 90, 90))
     cost, name, lbl = cheapest_option(comparison, option_labels, all_option_costs(include_fixed))
     pdf.para(f"Laagste jaarkosten: {name}{' ' + lbl if lbl else ''}: {eur(cost)}", style="B")
     pdf.data_table(table_df)
+    _provider_breakdown_section(pdf, comparison, include_fixed, list(breakdown_options), breakdown_note)
     for png in charts:
         pdf.chart(png)
 
@@ -592,7 +624,9 @@ def _sweep_sections(pdf, data, include_fixed):
                           sweep_provider_charts(comparison, rows, include_fixed),
                           "Dezelfde batterijsimulaties, doorgerekend met elk contract. De grafieken tonen 90% "
                           "rendement; de tabel bevat alle combinaties. De aansturing van de batterij is bepaald "
-                          "door Leverancier 1.")
+                          "door Leverancier 1.",
+                          breakdown_options=sweep_breakdown_options(rows),
+                          breakdown_note="Zonder batterij en per batterijgrootte bij 90% rendement.")
 
 
 def build_report(data, include_fixed=True, generated_at=None):

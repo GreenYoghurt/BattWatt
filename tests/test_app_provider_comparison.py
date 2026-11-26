@@ -152,3 +152,96 @@ def test_sweep_with_two_providers(app):
     assert all(len(c["results"]) == len(sweep["rows"]) for c in comparison)
     assert comparison[0]["cost_baseline"] == pytest.approx(sweep["cost_baseline"])
     assert "Vergelijking energieleveranciers" in _subheaders(app)
+
+
+def _breakdown_table(at):
+    """The 'Kostenopbouw per leverancier' table: amount columns only, no Tarief column."""
+    for df in at.dataframe:
+        value = df.value
+        if "Post" in value.columns and any("·" in c or c.endswith("(€)") for c in value.columns[1:]) \
+                and "Tarief" not in value.columns:
+            return value
+    raise AssertionError("no provider Kostenopbouw table")
+
+
+def _assert_matches_comparison(table, comparison, battery_labels):
+    """Every amount in the table comes from compare_providers()' breakdowns."""
+    from results_tables import breakdown_row_defs, unique_labels
+    names = unique_labels([c["name"] for c in comparison])
+    posts = list(table["Post"])
+    for name, c in zip(names, comparison):
+        cols = ([(f"{name} · zonder batterij (€)", c["breakdown_baseline"], c["cost_baseline"])]
+                + [(f"{name} · {lbl} (€)", r["breakdown"], r["cost_total"])
+                   for lbl, r in zip(battery_labels, c["results"])]
+                if battery_labels else [(f"{name} (€)", c["breakdown_baseline"], c["cost_baseline"])])
+        for col, bd, total in cols:
+            assert table[col].iloc[-1] == pytest.approx(round(total, 2))
+            applicable = {key: (label, is_credit) for label, key, is_credit, *_ in breakdown_row_defs(bd)}
+            for post, value in zip(posts[:-1], table[col].iloc[:-1]):
+                match = [k for k, (label, _) in applicable.items() if label in post.split(" / ")]
+                if match:
+                    key = match[0]
+                    sign = -1 if applicable[key][1] else 1
+                    assert value == pytest.approx(round(sign * bd[key], 2)), (col, post)
+                else:
+                    assert pd.isna(value), (col, post)
+
+
+def test_provider_breakdown_table_manual_batteries(app):
+    app.radio[1].set_value("Handmatige batterijen").run()
+    _add_fixed_provider(app)
+    _button(app, "🚀 Start Simulatie").click().run()
+    assert not app.exception
+
+    comparison = app.session_state["simulation_result"]["provider_comparison"]
+    table = _breakdown_table(app)
+    posts = list(table["Post"])
+    # Rows of both contract types, with '—' (NaN) where they don't apply.
+    for post in ("Abonnementskosten", "Marktprijs inkoop", "Energiebelasting", "Leveranciersopslag inkoop",
+                 "Normaaltarief", "Daltarief", "Totaal"):
+        assert post in posts
+    assert pd.isna(table.loc[posts.index("Normaaltarief"), "Mijn Leverancier · zonder batterij (€)"])
+    assert pd.isna(table.loc[posts.index("Marktprijs inkoop"), "Leverancier 2 · zonder batterij (€)"])
+    _assert_matches_comparison(table, comparison, ["10 kWh"])
+
+    downloads = [b.proto.label for b in app.get("download_button")]
+    assert "⬇️ Download kostenopbouw per leverancier (CSV)" in downloads
+
+
+def test_provider_breakdown_table_without_fixed_costs(app):
+    app.radio[1].set_value("Handmatige batterijen").run()
+    _add_fixed_provider(app)
+    _button(app, "🚀 Start Simulatie").click().run()
+    app.checkbox[0].uncheck().run()
+    assert not app.exception
+    table = _breakdown_table(app)
+    assert "Abonnementskosten" not in list(table["Post"])
+    comparison = app.session_state["simulation_result"]["provider_comparison"]
+    assert table["Leverancier 2 · zonder batterij (€)"].iloc[-1] == pytest.approx(
+        round(comparison[1]["cost_baseline_variable"], 2))
+
+
+def test_provider_breakdown_table_no_battery_mode(app):
+    from results_tables import NO_BATTERY_MODE
+    app.radio[1].set_value(NO_BATTERY_MODE).run()
+    _add_fixed_provider(app)
+    _button(app, "🚀 Bereken Kosten").click().run()
+    assert not app.exception
+    comparison = app.session_state["simulation_result"]["provider_comparison"]
+    table = _breakdown_table(app)
+    assert list(table.columns) == ["Post", "Mijn Leverancier (€)", "Leverancier 2 (€)"]
+    _assert_matches_comparison(table, comparison, [])
+
+
+def test_provider_breakdown_table_sweep(app):
+    _add_fixed_provider(app)
+    _button(app, "🚀 Start Simulatie").click().run()
+    assert not app.exception
+    sweep = app.session_state["sweep_result"]
+    table = _breakdown_table(app)
+    # Without battery plus each size at 90% efficiency, per provider.
+    assert len(table.columns) == 1 + 2 * 5
+    idx_10 = next(i for i, r in enumerate(sweep["rows"]) if r["size_kwh"] == 10 and r["efficiency"] == 0.90)
+    fixed = sweep["provider_comparison"][1]
+    assert table["Leverancier 2 · 10 kWh (€)"].iloc[-1] == pytest.approx(
+        round(fixed["results"][idx_10]["cost_total"], 2))

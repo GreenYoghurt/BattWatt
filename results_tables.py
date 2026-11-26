@@ -162,3 +162,72 @@ def cheapest_option(comparison, option_labels, option_costs):
 def all_option_costs(include_fixed):
     return lambda c: ([provider_cost(c, include_fixed, baseline=True)]
                       + [provider_cost(r, include_fixed) for r in c['results']])
+
+
+# Variable rows of both contract types, in display order. Feed-in comes last
+# for both, so it can share one row ("teruglevering_opbrengst").
+_FEED_IN_KEY = "teruglevering_opbrengst"
+
+
+def provider_breakdown_dataframe(comparison, include_fixed, options=()):
+    """Kostenopbouw per leverancier: one row per cost item, one column per
+    provider × option, from the breakdowns ``billing.compare_providers()``
+    returns.
+
+    ``options`` lists the batteries to include as ``(label, index into
+    entry['results'])``; the cost without battery is always the first column
+    of each provider. Without options there is one column per provider.
+
+    Dynamic and fixed contracts have different rows (market price, energy tax
+    and mark-ups versus normaal/dal tariffs); the table holds the union, with
+    NaN where a row doesn't apply to a provider's contract (shown as '—').
+    Credits (belastingvermindering, feed-in) are negative, as in
+    ``breakdown_dataframe``. The 'Totaal' row is the provider's bill with or
+    without the fixed costs, per ``include_fixed``.
+    """
+    names = unique_labels([c['name'] for c in comparison])
+
+    # Union of the rows of every provider's contract type, keyed by breakdown key.
+    rows = {}
+    for c in comparison:
+        for label, key, is_credit, _vol, is_fixed, _tarief in breakdown_row_defs(c['breakdown_baseline']):
+            if not include_fixed and is_fixed:
+                continue
+            if key not in rows:
+                rows[key] = {"labels": [label], "is_credit": is_credit, "is_fixed": is_fixed}
+            elif label not in rows[key]["labels"]:
+                rows[key]["labels"].append(label)
+    order = [k for k in rows if rows[k]["is_fixed"]]
+    order += [k for k in rows if not rows[k]["is_fixed"] and k != _FEED_IN_KEY]
+    order += [k for k in rows if k == _FEED_IN_KEY]
+
+    columns = []  # (column name, breakdown, entry for the total, is_baseline)
+    for name, c in zip(names, comparison):
+        if not options:
+            columns.append((f"{name} (€)", c['breakdown_baseline'], c, True))
+            continue
+        columns.append((f"{name} · zonder batterij (€)", c['breakdown_baseline'], c, True))
+        for label, idx in options:
+            r = c['results'][idx]
+            columns.append((f"{name} · {label} (€)", r['breakdown'], r, False))
+
+    out = []
+    for key in order:
+        spec = rows[key]
+        sign = -1 if spec["is_credit"] else 1
+        row = {"Post": " / ".join(spec["labels"])}
+        for col, bd, _entry, _base in columns:
+            row[col] = round(sign * bd[key], 2) if key in bd else float("nan")
+        out.append(row)
+    total = {"Post": "Totaal"}
+    for col, _bd, entry, is_base in columns:
+        total[col] = round(provider_cost(entry, include_fixed, baseline=is_base), 2)
+    out.append(total)
+    return pd.DataFrame(out, columns=["Post"] + [c[0] for c in columns])
+
+
+def sweep_breakdown_options(rows, efficiency=0.90):
+    """Options for provider_breakdown_dataframe in the battery-size sweep: each
+    size at one efficiency (90%, as the comparison charts), so the table stays
+    readable instead of holding all 12 combinations per provider."""
+    return [(f"{r['size_kwh']} kWh", i) for i, r in enumerate(rows) if r['efficiency'] == efficiency]

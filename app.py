@@ -21,8 +21,10 @@ from results_tables import (
     provider_cost as _provider_cost,
     provider_comparison_dataframe as _provider_comparison_dataframe,
     sweep_provider_dataframe as _sweep_provider_dataframe,
+    sweep_breakdown_options,
     cheapest_option as _cheapest_option,
     all_option_costs as _all_option_costs,
+    provider_breakdown_dataframe as _provider_breakdown_dataframe,
     NO_BATTERY_MODE,
 )
 # Failure reporting is optional: if the module is broken or a dependency is
@@ -640,6 +642,22 @@ def _cheapest_caption(comparison, option_labels, option_costs):
     return f"💡 Laagste jaarkosten: **{name}** {lbl}: **€{cost:,.2f}**"
 
 
+def _render_provider_breakdown(comparison, include_fixed, options, csv_name, key, caption=None):
+    """'Kostenopbouw per leverancier': the cost items of every provider side by
+    side, like the battery Kostenopbouw. Rows that don't apply to a contract
+    type (e.g. Normaaltarief for a dynamic contract) show '—'."""
+    table_df = _provider_breakdown_dataframe(comparison, include_fixed, options)
+    st.markdown("##### Kostenopbouw per leverancier")
+    st.caption((caption + " " if caption else "")
+               + "Bedragen in € per jaar; opbrengsten en kortingen zijn negatief. "
+               "'—' betekent dat de post niet bij dat type contract hoort.")
+    amounts = {c: st.column_config.NumberColumn(c, format="%.2f") for c in table_df.columns if c != "Post"}
+    # Tall enough to show every row including Totaal (about 35 px per row plus the header).
+    st.dataframe(table_df, use_container_width=True, hide_index=True, column_config=amounts,
+                 placeholder="—", height=(len(table_df) + 1) * 35 + 3)
+    _download_csv(table_df, "⬇️ Download kostenopbouw per leverancier (CSV)", csv_name, key=key)
+
+
 def _render_provider_comparison(comparison, battery_labels, include_fixed):
     st.subheader("Vergelijking energieleveranciers")
     if not battery_labels:
@@ -666,6 +684,8 @@ def _render_provider_comparison(comparison, battery_labels, include_fixed):
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
                   "JortApp_leveranciersvergelijking.csv", key="provider_comparison_csv")
+    _render_provider_breakdown(comparison, include_fixed, list(zip(battery_labels, range(len(battery_labels)))),
+                               "JortApp_kostenopbouw_leveranciers.csv", key="provider_breakdown_csv")
 
 
 def _render_baseline_provider_comparison(comparison, include_fixed):
@@ -681,6 +701,8 @@ def _render_baseline_provider_comparison(comparison, include_fixed):
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
                   "JortApp_leveranciersvergelijking.csv", key="provider_comparison_csv")
+    _render_provider_breakdown(comparison, include_fixed, [],
+                               "JortApp_kostenopbouw_leveranciers.csv", key="provider_breakdown_csv")
 
 
 def _render_baseline_results(res_data):
@@ -794,6 +816,11 @@ def _render_sweep_provider_comparison(comparison, rows, include_fixed):
         _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
                       "JortApp_leveranciersvergelijking_batterijgrootte.csv",
                       key="sweep_provider_comparison_csv")
+    with st.expander("Kostenopbouw per leverancier", expanded=False):
+        _render_provider_breakdown(comparison, include_fixed, sweep_breakdown_options(rows),
+                                   "JortApp_kostenopbouw_leveranciers_batterijgrootte.csv",
+                                   key="sweep_provider_breakdown_csv",
+                                   caption="Zonder batterij en per batterijgrootte bij 90% rendement.")
 
 
 # ── Secrets / API Key ─────────────────────────────────────────────────────────
