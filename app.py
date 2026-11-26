@@ -187,6 +187,64 @@ def create_price_chart(df, title="Marktprijs vs Batterij SoC"):
     )
     return _style_figure(fig, height=500)
 
+
+# ── Energy-flow charts with season weeks ──────────────────────────────────────
+
+# For periods longer than this, the energy-flow charts get tabs: the full
+# period plus the first week of a month per season.
+_LONG_PERIOD = pd.Timedelta(days=32)
+_SEASON_WEEKS = {
+    "❄️ Winter (Jan)": 1,
+    "🌱 Lente (Apr)": 4,
+    "☀️ Zomer (Jul)": 7,
+    "🍂 Herfst (Okt)": 10,
+}
+
+
+def _period_slices(df):
+    """[(tab name, frame), ...] for a long period, or None for a short one.
+
+    The first tab is the full period; then the first week of each season month
+    present in the data, or the first and last week if none of them is.
+    """
+    if df['timestamp'].max() - df['timestamp'].min() <= _LONG_PERIOD:
+        return None
+    slices = [("📊 Volledige Periode", df)]
+    for name, month in _SEASON_WEEKS.items():
+        in_month = df['timestamp'].dt.month == month
+        if in_month.any():
+            start = df.loc[in_month, 'timestamp'].min()
+            slices.append((name, df[(df['timestamp'] >= start) & (df['timestamp'] < start + pd.Timedelta(days=7))]))
+    if len(slices) == 1:
+        slices += [("Begin van periode", df.head(7 * 24 * 4)), ("Einde van periode", df.tail(7 * 24 * 4))]
+    return slices
+
+
+def _render_energy_flow(df, key_prefix, with_battery=True):
+    """Usage chart (+ price/SoC chart with a battery), with season-week tabs for
+    long periods. Shared by both battery modes and the 'Geen batterij' mode."""
+    usage_title = "Huisverbruik & Zon vs Batterij Status (%)" if with_battery else "Huisverbruik & Zon"
+    price_title = "Marktprijs vs Batterij SoC (kWh)"
+    slices = _period_slices(df)
+    if slices is None:
+        st.plotly_chart(create_usage_chart(df, title=usage_title), use_container_width=True,
+                        config=PLOT_CONFIG, key=f"{key_prefix}_usage")
+        if with_battery:
+            st.plotly_chart(create_price_chart(df, title=price_title), use_container_width=True,
+                            config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        return
+    st.info("De gegevens beslaan een lange periode. Hieronder zie je representatieve weken voor "
+            "verschillende seizoenen en het totaaloverzicht.")
+    tabs = st.tabs([name for name, _ in slices])
+    for i, (tab, (name, plot_df)) in enumerate(zip(tabs, slices)):
+        title = "Volledige Periode" if i == 0 else name
+        with tab:
+            st.plotly_chart(create_usage_chart(plot_df, title=f"{usage_title} - {title}"),
+                            use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
+            if with_battery:
+                st.plotly_chart(create_price_chart(plot_df, title=f"{price_title} - {title}"),
+                                use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
+
 # ── Battery configuration helpers ────────────────────────────────────────────
 
 _battery_display_to_key = {
@@ -364,46 +422,7 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
                 col_diff.markdown(f"<span style='color:red'>**▲ € {abs(total_diff):,.2f}**</span>", unsafe_allow_html=True)
 
     with st.expander("Interactieve Energieflow", expanded=True):
-        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
-        if duration > pd.Timedelta(days=32):
-            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
-            seasons = {
-                "❄️ Winter (Jan)": 1,
-                "🌱 Lente (Apr)": 4,
-                "☀️ Zomer (Jul)": 7,
-                "🍂 Herfst (Okt)": 10,
-            }
-            available_seasons = {}
-            for name, month in seasons.items():
-                mask = result.df['timestamp'].dt.month == month
-                if mask.any():
-                    start_time = result.df[mask]['timestamp'].min()
-                    end_time = start_time + pd.Timedelta(days=7)
-                    available_seasons[name] = result.df[
-                        (result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)
-                    ]
-            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
-            if not available_seasons:
-                tab_names += ["Begin van periode", "Einde van periode"]
-            chart_tabs = st.tabs(tab_names)
-            for i, t_name in enumerate(tab_names):
-                with chart_tabs[i]:
-                    if i == 0:
-                        plot_df = result.df
-                        slice_title = "Volledige Periode"
-                    else:
-                        s_name = (list(available_seasons.keys())[i - 1]
-                                  if available_seasons
-                                  else ["Begin van periode", "Einde van periode"][i - 1])
-                        plot_df = (available_seasons[s_name]
-                                   if available_seasons
-                                   else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
-                        slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
-        else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        _render_energy_flow(result.df, key_prefix)
 
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
@@ -711,8 +730,8 @@ def _render_baseline_results(res_data):
     st.divider()
     st.subheader("Verbruik en teruglevering")
     df = res_data['baseline_df']
-    st.plotly_chart(create_usage_chart(df, title="Huisverbruik & Zon"), use_container_width=True,
-                    config=PLOT_CONFIG, key="baseline_usage")
+    # Same season-week tabs as the battery modes, without the battery lines/price chart.
+    _render_energy_flow(df, "baseline", with_battery=False)
 
     with st.expander("Bekijk Ruwe Data"):
         st.dataframe(df.head(100))
@@ -1797,46 +1816,7 @@ elif 'simulation_result' in st.session_state:
         if len(selected_indices) > 1:
             st.markdown(f"#### {pill_labels[idx]}")
 
-        duration = result.df['timestamp'].max() - result.df['timestamp'].min()
-        if duration > pd.Timedelta(days=32):
-            st.info("De simulatie beslaat een lange periode. Hieronder zie je representatieve weken voor verschillende seizoenen en het totaaloverzicht.")
-            seasons = {
-                "❄️ Winter (Jan)": 1,
-                "🌱 Lente (Apr)": 4,
-                "☀️ Zomer (Jul)": 7,
-                "🍂 Herfst (Okt)": 10,
-            }
-            available_seasons = {}
-            for name, month in seasons.items():
-                mask = result.df['timestamp'].dt.month == month
-                if mask.any():
-                    start_time = result.df[mask]['timestamp'].min()
-                    end_time = start_time + pd.Timedelta(days=7)
-                    available_seasons[name] = result.df[
-                        (result.df['timestamp'] >= start_time) & (result.df['timestamp'] < end_time)
-                    ]
-            tab_names = ["📊 Volledige Periode"] + list(available_seasons.keys())
-            if not available_seasons:
-                tab_names += ["Begin van periode", "Einde van periode"]
-            chart_tabs = st.tabs(tab_names)
-            for i, t_name in enumerate(tab_names):
-                with chart_tabs[i]:
-                    if i == 0:
-                        plot_df = result.df
-                        slice_title = "Volledige Periode"
-                    else:
-                        s_name = (list(available_seasons.keys())[i - 1]
-                                  if available_seasons
-                                  else ["Begin van periode", "Einde van periode"][i - 1])
-                        plot_df = (available_seasons[s_name]
-                                   if available_seasons
-                                   else (result.df.head(7 * 24 * 4) if i == 1 else result.df.tail(7 * 24 * 4)))
-                        slice_title = s_name
-                    st.plotly_chart(create_usage_chart(plot_df, title=f"Huisverbruik & Zon vs Batterij Status (%) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage_{i}")
-                    st.plotly_chart(create_price_chart(plot_df, title=f"Marktprijs vs Batterij SoC (kWh) - {slice_title}"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price_{i}")
-        else:
-            st.plotly_chart(create_usage_chart(result.df, title="Huisverbruik & Zon vs Batterij Status (%)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_usage")
-            st.plotly_chart(create_price_chart(result.df, title="Marktprijs vs Batterij SoC (kWh)"), use_container_width=True, config=PLOT_CONFIG, key=f"{key_prefix}_price")
+        _render_energy_flow(result.df, key_prefix)
 
         if pos < len(selected_indices) - 1:
             st.divider()

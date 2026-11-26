@@ -175,3 +175,57 @@ def test_switching_back_to_batteries_still_works(app):
     assert not app.exception
     assert len(app.session_state["simulation_result"]["all_results"]) == 1
     assert "Resultaten Overzicht" in [h.value for h in app.header]
+
+
+# ── Season-week tabs for long periods ────────────────────────────────────────
+
+SEASON_TABS = ["📊 Volledige Periode", "❄️ Winter (Jan)", "🌱 Lente (Apr)", "☀️ Zomer (Jul)", "🍂 Herfst (Okt)"]
+
+
+def _long_meter_df(start, days):
+    n = days * 96
+    rng = pd.date_range(start, periods=n, freq="15min")
+    phase = np.linspace(0, days * 2 * np.pi, n)  # one day/night cycle per day
+    return pd.DataFrame({
+        "timestamp": rng,
+        "verbruik": 0.3 + 0.2 * np.maximum(0, np.cos(phase)),
+        "teruglevering": np.maximum(0, np.sin(phase - np.pi / 2)) * 1.2,
+    })
+
+
+def _app_with(monkeypatch, meter_df, mode):
+    monkeypatch.setattr(data_loader, "fetch_entsoe_prices", _fake_prices)
+    at = AppTest.from_file(APP_PATH, default_timeout=300)
+    at.secrets["ENTSOE_API_KEY"] = "test"
+    at.session_state["smp_meter_df"] = meter_df
+    at.run()
+    at.radio[0].set_value("SlimmeMeterPortal API").run()
+    at.radio[1].set_value(mode).run()
+    return at
+
+
+def test_no_battery_full_year_has_season_tabs(monkeypatch):
+    # A full year in 'Geen batterij' mode gets the same season weeks as the
+    # battery modes, with only the usage chart (no battery/price chart).
+    at = _app_with(monkeypatch, _long_meter_df("2025-01-01", 365), NO_BATTERY_MODE)
+    _start(at)
+    assert [t.label for t in at.tabs] == SEASON_TABS
+    for tab in at.tabs:
+        charts = tab.get("plotly_chart")
+        assert len(charts) == 1
+    assert "Huisverbruik & Zon - Volledige Periode" in str(at.tabs[0].get("plotly_chart")[0].proto.spec)
+
+
+def test_no_battery_short_period_has_no_tabs(app):
+    _start(app)  # 2 days of data
+    assert not any(t.label in SEASON_TABS for t in app.tabs)
+
+
+def test_battery_mode_long_period_keeps_usage_and_price_charts(monkeypatch):
+    # 40 days spanning April: battery modes still show both charts per tab.
+    at = _app_with(monkeypatch, _long_meter_df("2025-03-20", 40), "Handmatige batterijen")
+    _button(at, "🚀 Start Simulatie").click().run()
+    assert not at.exception
+    assert [t.label for t in at.tabs][:2] == ["📊 Volledige Periode", "🌱 Lente (Apr)"]
+    for tab in at.tabs[:2]:
+        assert len(tab.get("plotly_chart")) == 2
