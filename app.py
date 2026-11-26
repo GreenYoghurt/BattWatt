@@ -39,7 +39,7 @@ import base64
 import time
 
 # Page configuration
-st.set_page_config(page_title="Jort's app - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
+st.set_page_config(page_title="JortApp - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
 
 # Helper to load images for CSS
 def get_base64_of_bin_file(bin_file):
@@ -763,7 +763,7 @@ _NOTIFIED_MSG = ("Als dit een probleem aan onze kant lijkt, wordt de beheerder v
 
 # ── Page header ───────────────────────────────────────────────────────────────
 
-st.title("🔋 Jort's app: Thuisbatterij Evaluator")
+st.title("🔋 JortApp: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je **kwartiergegevens** (P1-meterdata per 15 minuten) om te beginnen.
