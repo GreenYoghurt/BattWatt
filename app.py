@@ -1130,6 +1130,15 @@ for pid in list(st.session_state.provider_ids):
         )
 
         if st.session_state[f"prov_type_{pid}"] == "Vast contract":
+            st.number_input(
+                "Normaaltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_normaal_{pid}",
+                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 07:00 en 23:00. Of de energiebelasting erin zit, geef je hieronder aan."
+            )
+            st.number_input(
+                "Daltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_dal_{pid}",
+                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend. Of de energiebelasting erin zit, geef je hieronder aan."
+            )
+            # Directly below the two tariffs it is about.
             st.radio(
                 "Zijn de normaal- en daltarieven inclusief of exclusief energiebelasting? (verplicht)",
                 [_EB_INCL, _EB_EXCL], index=None, key=f"prov_eb_{pid}",
@@ -1138,14 +1147,6 @@ for pid in list(st.session_state.provider_ids):
                       f"De app telt dan €{get_energy_tax_incl_vat():.4f}/kWh (incl. BTW) op bij het normaal- en "
                       "daltarief. Over teruglevering wordt geen energiebelasting geheven, dus de "
                       "terugleververgoeding blijft ongewijzigd."),
-            )
-            st.number_input(
-                "Normaaltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_normaal_{pid}",
-                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 07:00 en 23:00. Of de energiebelasting erin zit, geef je hierboven aan."
-            )
-            st.number_input(
-                "Daltarief (€/kWh incl. BTW)", step=0.01, format="%.4f", key=f"prov_dal_{pid}",
-                help="Leveringsprijs (incl. BTW) voor verbruik op werkdagen tussen 23:00 en 07:00, en het hele weekend. Of de energiebelasting erin zit, geef je hierboven aan."
             )
             if st.session_state.get(f"prov_eb_{pid}") == _EB_EXCL:
                 normaal_all_in, dal_all_in = _fixed_tariffs_all_in(pid)
