@@ -128,7 +128,8 @@ def test_billing_engine_fixed_contract_breakdown():
     bd = billing.calculate_bill_breakdown(result)
 
     expected_flexible = 1.2  # from test_fixed_costs_breakdown_splits_normaal_and_dal
-    expected_fixed = 50.0 + get_grid_operator_fee("Enexis") - get_tax_discount(2025)
+    # Default grid operator is Liander (issue #47; was Enexis).
+    expected_fixed = 50.0 + get_grid_operator_fee("Liander") - get_tax_discount(2025)
     assert bd["contract_type"] == "fixed"
     assert bd["total"] == pytest.approx(expected_fixed + expected_flexible)
     assert bd["total"] == pytest.approx(billing.calculate_bill(result))
@@ -219,7 +220,8 @@ def test_fixed_contract_pv_controller_e2e(merged_df_two_days):
     expected_normaal_kosten = expected_normaal_kwh * provider.normaal_tarief
     expected_dal_kosten = expected_dal_kwh * provider.dal_tarief
     expected_teruglevering_opbrengst = expected_feed_in * provider.terugleververgoeding
-    expected_fixed_costs = provider.subscription_cost + get_grid_operator_fee("Enexis") - get_tax_discount(2025)
+    # Default grid operator is Liander (issue #47; was Enexis).
+    expected_fixed_costs = provider.subscription_cost + get_grid_operator_fee("Liander") - get_tax_discount(2025)
     expected_baseline_total = (
         expected_fixed_costs + expected_normaal_kosten + expected_dal_kosten - expected_teruglevering_opbrengst
     )
@@ -269,5 +271,7 @@ def test_fixed_contract_pv_controller_e2e(merged_df_two_days):
     # Negative because the full-year fixed costs (netbeheerskosten,
     # belastingvermindering) aren't prorated to this 2-day dataset — see
     # docs/cost-calculation.md's note on partial-year data.
-    expected_simulated_cost = -86.35
+    # Was -86.35 with Enexis; Liander is the default grid operator since issue
+    # #47 (455.73 vs 475.92/year), so exactly 20.19 lower.
+    expected_simulated_cost = -106.54
     assert abs(cost_simulated - expected_simulated_cost) < 0.05

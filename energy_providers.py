@@ -33,8 +33,13 @@ def get_tax_discount(year: int=2025) -> float:
         raise ValueError("Tax discount for the specified year is not available.")
 
 
-def get_grid_operator_fee(dso:str = 'Enexis') -> float:
-    
+# Grid operator (netbeheerder) used when none is given: the app has no DSO
+# selector, so this decides the netbeheerskosten of every simulation (issue #47).
+DEFAULT_DSO = 'Liander'
+
+
+def get_grid_operator_fee(dso: str = DEFAULT_DSO) -> float:
+
     # 2025 tarrifs for the whole year
     if dso == 'Enexis':
         return 475.92
@@ -199,7 +204,7 @@ class Provider:
     def calculate_costs_total(self, consumption_kwh, feed_in_kwh, datetime_index, prices_eur_per_kwh_excl_vat=None) -> float:
         return self.calculate_costs_breakdown(consumption_kwh, feed_in_kwh, datetime_index, prices_eur_per_kwh_excl_vat)["total_flexible"]
 
-    def calculate_dynamic_bill(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat, dso: str = 'Enexis') -> float:
+    def calculate_dynamic_bill(self, consumption_kwh, feed_in_kwh, prices_eur_per_kwh_excl_vat, dso: str = DEFAULT_DSO) -> float:
         netbeheerskosten = get_grid_operator_fee(dso)
         abonnementskosten = self.subscription_cost
         vermindering_belasting = get_tax_discount(year=2025)

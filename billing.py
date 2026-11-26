@@ -1,11 +1,11 @@
 from models import SimulationResult
-from energy_providers import Provider, VAT_RATE, get_energy_tax_excl_vat, get_grid_operator_fee, get_tax_discount
+from energy_providers import Provider, VAT_RATE, DEFAULT_DSO, get_energy_tax_excl_vat, get_grid_operator_fee, get_tax_discount
 
 class BillingEngine:
     """
     Calculates costs and savings based on simulation results and provider configurations.
     """
-    def __init__(self, provider: Provider, dso: str = 'Enexis', year: int = 2025):
+    def __init__(self, provider: Provider, dso: str = DEFAULT_DSO, year: int = 2025):
         self.provider = provider
         self.dso = dso
         self.year = year
@@ -112,7 +112,7 @@ def fixed_costs_from_breakdown(breakdown: dict) -> float:
 
 
 def compare_providers(providers, baseline_result: SimulationResult, simulated_results,
-                      dso: str = "Enexis", year: int = 2025) -> list:
+                      dso: str = DEFAULT_DSO, year: int = 2025) -> list:
     """Bills the same baseline and battery simulations under several providers.
 
     The battery dispatch is computed once (by the caller) and reused for every
