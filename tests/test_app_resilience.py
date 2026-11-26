@@ -67,6 +67,12 @@ def test_app_starts_when_error_reporting_cannot_be_imported(monkeypatch):
     assert "Thuisbatterij Evaluator" in at.title[0].value
 
 
+def test_page_heading_is_jortapp():
+    at = AppTest.from_file(APP_PATH, default_timeout=120).run()
+    assert not at.exception
+    assert at.title[0].value == "🔋 JortApp: Thuisbatterij Evaluator"
+
+
 def test_submit_report_returns_immediately_when_reporting_hangs():
     release = threading.Event()
 

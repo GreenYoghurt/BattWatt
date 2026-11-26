@@ -1,6 +1,6 @@
 # Assumptions & known limitations
 
-BattWatt is a simulation and estimation tool, not a substitute for a formal energy audit. Every
+JortApp is a simulation and estimation tool, not a substitute for a formal energy audit. Every
 number it produces rests on a set of simplifications, listed here so results can be interpreted
 correctly. Each item points at the code it comes from.
 
@@ -11,7 +11,7 @@ solar installation that experiences curtailment.
 
 In reality, inverters or the grid operator sometimes cap ("curtail") how much solar power is
 allowed to flow to the grid — because of an inverter export limit, grid congestion, or negative
-prices making export uneconomical. BattWatt cannot represent this, for two independent reasons:
+prices making export uneconomical. JortApp cannot represent this, for two independent reasons:
 
 1. **No export cap exists anywhere in the physics model.** Neither `Battery` (`battery.py`) nor
    `Simulator` (`simulator.py`) impose any limit on `to_grid`/export power. Production always
@@ -24,7 +24,7 @@ prices making export uneconomical. BattWatt cannot represent this, for two indep
    reallocate energy that's present in the recorded data; it can't recover energy that was
    already clipped upstream of the meter.
 
-**Practical effect:** if your installation is curtailment-prone, BattWatt will systematically
+**Practical effect:** if your installation is curtailment-prone, JortApp will systematically
 *underestimate* the value a battery would add, because "storing energy that would otherwise be
 curtailed" is exactly the scenario it cannot see or simulate.
 

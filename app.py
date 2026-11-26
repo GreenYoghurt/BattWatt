@@ -39,7 +39,7 @@ import base64
 import time
 
 # Page configuration
-st.set_page_config(page_title="Jort's app - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
+st.set_page_config(page_title="JortApp - Thuisbatterij Evaluator", layout="wide", page_icon="🔋")
 
 # Helper to load images for CSS
 def get_base64_of_bin_file(bin_file):
@@ -91,7 +91,7 @@ def get_duration_conv(df):
 PLOT_CONFIG = {
     "displaylogo": False,
     "displayModeBar": True,
-    "toImageButtonOptions": {"format": "png", "scale": 3, "filename": "battwatt_grafiek"},
+    "toImageButtonOptions": {"format": "png", "scale": 3, "filename": "JortApp_grafiek"},
 }
 
 
@@ -265,7 +265,7 @@ def _render_unified_breakdown(all_results, display_baseline, display_costs, brea
     table_df = _breakdown_dataframe(all_results, breakdown_baseline, display_baseline, display_costs, include_fixed)
     with st.expander("📋 Kostenopbouw als tabel (kopiëren / exporteren)"):
         st.dataframe(table_df, use_container_width=True, hide_index=True)
-        _download_csv(table_df, "⬇️ Download kostenopbouw (CSV)", "battwatt_kostenopbouw.csv",
+        _download_csv(table_df, "⬇️ Download kostenopbouw (CSV)", "JortApp_kostenopbouw.csv",
                       key="breakdown_csv")
 
 
@@ -403,7 +403,7 @@ def _render_battery_detail(res, display_baseline, breakdown_baseline, include_fi
     with st.expander("Bekijk Ruwe Simulatiedata"):
         st.dataframe(result.df.head(100))
         _download_csv(result.df, "⬇️ Download volledige simulatiedata (CSV)",
-                      "battwatt_simulatiedata.csv", key=f"{key_prefix}_raw_csv")
+                      "JortApp_simulatiedata.csv", key=f"{key_prefix}_raw_csv")
 
 
 # ── Battery-size sweep renderer ────────────────────────────────────────────────
@@ -554,7 +554,7 @@ def _render_sweep_results(sweep_data):
         cost_key = 'cost_total' if include_fixed_sweep else 'cost_variable'
         summary_df = _sweep_summary_dataframe(rows, include_fixed_sweep)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
-        _download_csv(summary_df, "⬇️ Download tabel (CSV)", "battwatt_batterijgrootte_vergelijking.csv",
+        _download_csv(summary_df, "⬇️ Download tabel (CSV)", "JortApp_batterijgrootte_vergelijking.csv",
                       key="sweep_summary_csv")
 
         for r in rows:
@@ -638,7 +638,7 @@ def _render_provider_comparison(comparison, battery_labels, include_fixed):
     table_df = _provider_comparison_dataframe(comparison, battery_labels, include_fixed)
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
-                  "battwatt_leveranciersvergelijking.csv", key="provider_comparison_csv")
+                  "JortApp_leveranciersvergelijking.csv", key="provider_comparison_csv")
 
 
 def _build_sweep_provider_charts(comparison, rows, include_fixed, efficiency=0.90):
@@ -694,7 +694,7 @@ def _render_sweep_provider_comparison(comparison, rows, include_fixed):
         table_df = _sweep_provider_dataframe(comparison, rows, include_fixed)
         st.dataframe(table_df, use_container_width=True, hide_index=True)
         _download_csv(table_df, "⬇️ Download leveranciersvergelijking (CSV)",
-                      "battwatt_leveranciersvergelijking_batterijgrootte.csv",
+                      "JortApp_leveranciersvergelijking_batterijgrootte.csv",
                       key="sweep_provider_comparison_csv")
 
 
@@ -763,7 +763,7 @@ _NOTIFIED_MSG = ("Als dit een probleem aan onze kant lijkt, wordt de beheerder v
 
 # ── Page header ───────────────────────────────────────────────────────────────
 
-st.title("🔋 Jort's app: Thuisbatterij Evaluator")
+st.title("🔋 JortApp: Thuisbatterij Evaluator")
 st.markdown("""
 Evalueer de impact van een thuisbatterij op je energierekening met de Nederlandse marktdynamiek.
 Upload je **kwartiergegevens** (P1-meterdata per 15 minuten) om te beginnen.
@@ -1723,11 +1723,11 @@ elif 'simulation_result' in st.session_state:
                 with tab:
                     st.dataframe(res['result'].df.head(100))
                     _download_csv(res['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
-                                  "battwatt_simulatiedata.csv", key=f"raw_csv_{res['label']}")
+                                  "JortApp_simulatiedata.csv", key=f"raw_csv_{res['label']}")
         else:
             st.dataframe(all_results[0]['result'].df.head(100))
             _download_csv(all_results[0]['result'].df, "⬇️ Download volledige simulatiedata (CSV)",
-                          "battwatt_simulatiedata.csv", key="raw_csv_single")
+                          "JortApp_simulatiedata.csv", key="raw_csv_single")
 
 elif not uploaded_meter:
     st.info("👈 Upload je kwartiergegevens (P1-metergegevens per 15 minuten) in de zijbalk om de berekening te starten.")
